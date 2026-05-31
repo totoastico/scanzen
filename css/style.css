@@ -376,3 +376,28 @@ body {
 .crop__loading[hidden] {
   display: none;
 }
+
+/* --- Sélecteur de filtre (écran résultat) --- */
+.filters {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  padding: 12px 20px 4px;
+}
+.filter-btn {
+  flex: 1;
+  max-width: 130px;
+  padding: 10px 8px;
+  border-radius: 999px;
+  border: 1.5px solid rgba(255, 255, 255, 0.3);
+  background: transparent;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.filter-btn--active {
+  background: var(--accent);
+  border-color: var(--accent);
+}

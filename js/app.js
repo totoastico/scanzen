@@ -2,16 +2,19 @@
 // app.js — le "chef d'orchestre" de Scanzen.
 //
 // Il coordonne les écrans et l'état de l'app, et délègue le travail
-// spécialisé aux autres fichiers (camera.js, scanner.js).
+// spécialisé aux autres fichiers (camera.js, scanner.js, filters.js).
 // ===================================================================
 
 import { startCamera, stopCamera, capturePhoto } from "./camera.js";
 import { initCrop, dewarp } from "./scanner.js";
+import { applyFilter } from "./filters.js";
 
 // --- État partagé de l'app (il grandira au fil des étapes) ---
 const state = {
   capturedImage: null, // photo brute prise par la caméra
-  dewarpedImage: null, // page redressée (résultat du recadrage)
+  dewarpedImage: null, // page redressée (avant filtre)
+  filteredImage: null, // page redressée + filtre (résultat final)
+  activeFilter: "auto", // mode de filtre courant
 };
 
 // --- Éléments de la page dont on a besoin ---
@@ -20,12 +23,25 @@ const cameraError = document.getElementById("camera-error");
 const cameraErrorText = document.getElementById("camera-error-text");
 const previewImage = document.getElementById("preview-image");
 const resultImage = document.getElementById("result-image");
+const filterButtons = document.querySelectorAll(".filter-btn");
+
+// Image "source" (la page redressée) sur laquelle on applique les filtres.
+const sourceImg = new Image();
 
 // --- Navigation entre écrans : un seul visible à la fois ---
 const screens = document.querySelectorAll(".screen");
 function showScreen(id) {
   screens.forEach((screen) => screen.classList.remove("screen--active"));
   document.getElementById(id).classList.add("screen--active");
+}
+
+// Charge une data URL dans une <img> et attend qu'elle soit prête.
+function loadInto(imgEl, dataUrl) {
+  return new Promise((resolve, reject) => {
+    imgEl.onload = () => resolve();
+    imgEl.onerror = () => reject(new Error("Image illisible"));
+    imgEl.src = dataUrl;
+  });
 }
 
 // --- Ouvrir la caméra (depuis l'accueil ou "Reprendre") ---
@@ -55,6 +71,24 @@ function describeCameraError(err) {
     return "Aucune caméra détectée sur cet appareil.";
   }
   return "Impossible d'accéder à la caméra. Vérifiez que la page est ouverte en HTTPS ou sur localhost.";
+}
+
+// --- Écran résultat : affiche la page redressée + applique un filtre ---
+async function showResult(dewarpedDataUrl) {
+  await loadInto(sourceImg, dewarpedDataUrl);
+  setFilter(state.activeFilter || "auto");
+  showScreen("screen-result");
+}
+
+// Applique un mode (original/auto/bw), met à jour l'image affichée et
+// surligne le bouton actif.
+function setFilter(mode) {
+  state.activeFilter = mode;
+  state.filteredImage = applyFilter(sourceImg, mode);
+  resultImage.src = state.filteredImage;
+  filterButtons.forEach((b) =>
+    b.classList.toggle("filter-btn--active", b.dataset.filter === mode)
+  );
 }
 
 // ===================================================================
@@ -88,21 +122,25 @@ document.getElementById("btn-use").addEventListener("click", async () => {
 // Recadrage → "Reprendre" : revenir à la caméra
 document.getElementById("btn-crop-back").addEventListener("click", openCamera);
 
-// Recadrage → "Redresser" : on corrige la perspective et on affiche
-// le résultat à plat.
-document.getElementById("btn-crop-confirm").addEventListener("click", () => {
+// Recadrage → "Redresser" : on corrige la perspective puis on affiche
+// le résultat (avec le filtre par défaut).
+document.getElementById("btn-crop-confirm").addEventListener("click", async () => {
   try {
     state.dewarpedImage = dewarp();
-    resultImage.src = state.dewarpedImage;
-    showScreen("screen-result");
+    await showResult(state.dewarpedImage);
   } catch (e) {
     console.error(e);
     alert("Le redressement a échoué. Essaie de réajuster les coins.");
   }
 });
 
-// Résultat → "Nouveau scan" : retour à l'accueil (provisoire ; les
-// filtres et la liste des pages arrivent aux étapes 4 et 5).
+// Boutons de filtre (Original / Auto / N&B)
+filterButtons.forEach((b) =>
+  b.addEventListener("click", () => setFilter(b.dataset.filter))
+);
+
+// Résultat → "Nouveau scan" : retour à l'accueil (provisoire ; la
+// liste des pages arrive à l'étape 5).
 document.getElementById("btn-result-restart").addEventListener("click", () => {
   showScreen("screen-home");
 });
