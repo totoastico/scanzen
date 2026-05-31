@@ -4,6 +4,13 @@
 // On s'appuie sur jscanify, qui s'appuie lui-même sur OpenCV.js.
 // Ces deux librairies sont lourdes : on ne les charge QU'UNE FOIS,
 // et seulement au premier recadrage (pas au démarrage de l'app).
+//
+// ⚠️ Piège important : cv.imread(<img>) lit l'image à sa taille
+// AFFICHÉE à l'écran, pas à sa résolution réelle. On dessine donc
+// d'abord la photo sur un canvas à sa VRAIE résolution, et on utilise
+// ce canvas partout (détection ET redressement). Sinon les coins
+// (en pixels réels) ne correspondraient pas à l'image lue → document
+// rétréci dans un coin + flou.
 // ===================================================================
 
 const OPENCV_URL = "https://docs.opencv.org/4.7.0/opencv.js";
@@ -25,7 +32,8 @@ const CORNER_KEYS = [
 
 let enginePromise = null; // promesse de chargement du moteur (1 seule fois)
 let scanner = null; // instance jscanify
-let corners = null; // coins courants, EN PIXELS DE L'IMAGE D'ORIGINE
+let sourceCanvas = null; // la photo dessinée à sa VRAIE résolution
+let corners = null; // coins courants, EN PIXELS RÉELS de l'image
 let poly = null; // le polygone SVG
 let handleEls = {}; // les poignées SVG, rangées par coin
 let dragKey = null; // quel coin est en train d'être déplacé
@@ -50,12 +58,11 @@ export function ensureEngineLoaded() {
   if (enginePromise) return enginePromise;
   enginePromise = (async () => {
     await loadScript(OPENCV_URL);
-    // OpenCV se charge en deux temps : le script, puis le moteur WASM.
     await new Promise((resolve) => {
       const check = () => {
         if (window.cv && window.cv.Mat) resolve();
         else if (window.cv) window.cv.onRuntimeInitialized = resolve;
-        else setTimeout(check, 30); // cv pas encore défini, on réessaie
+        else setTimeout(check, 30);
       };
       check();
     });
@@ -81,9 +88,10 @@ function distance(a, b) {
 
 // Quadrilatère "par défaut" (marge de 8 %), au cas où la détection
 // automatique échoue : l'utilisateur ajustera les coins à la main.
-function defaultCorners(img) {
-  const w = img.naturalWidth;
-  const h = img.naturalHeight;
+// `src` est le canvas source (donc src.width/height = résolution réelle).
+function defaultCorners(src) {
+  const w = src.width;
+  const h = src.height;
   const mx = w * 0.08;
   const my = h * 0.08;
   return {
@@ -96,12 +104,11 @@ function defaultCorners(img) {
 
 // Vérifie que les coins détectés sont plausibles (pas de NaN, aire
 // suffisante). Sinon on retombe sur les coins par défaut.
-function validCorners(c, img) {
+function validCorners(c, src) {
   for (const k of CORNER_KEYS) {
     const p = c[k];
     if (!p || !isFinite(p.x) || !isFinite(p.y)) return false;
   }
-  // Aire du quadrilatère (formule du lacet) sur l'ordre TL, TR, BR, BL.
   const pts = CORNER_KEYS.map((k) => c[k]);
   let area = 0;
   for (let i = 0; i < pts.length; i++) {
@@ -110,13 +117,13 @@ function validCorners(c, img) {
     area += a.x * b.y - b.x * a.y;
   }
   area = Math.abs(area) / 2;
-  return area > 0.15 * img.naturalWidth * img.naturalHeight;
+  return area > 0.15 * src.width * src.height;
 }
 
-function detectCorners(img) {
+function detectCorners(src) {
   try {
-    const src = window.cv.imread(img);
-    const contour = scanner.findPaperContour(src);
+    const mat = window.cv.imread(src);
+    const contour = scanner.findPaperContour(mat);
     let c = null;
     if (contour) {
       try {
@@ -126,11 +133,11 @@ function detectCorners(img) {
       }
       if (contour.delete) contour.delete();
     }
-    src.delete();
-    return c && validCorners(c, img) ? c : defaultCorners(img);
+    mat.delete();
+    return c && validCorners(c, src) ? c : defaultCorners(src);
   } catch (e) {
     console.warn("Détection auto impossible, coins par défaut.", e);
-    return defaultCorners(img);
+    return defaultCorners(src);
   }
 }
 
@@ -191,7 +198,7 @@ function onHandleMove(e) {
   if (!dragKey) return;
   const rect = overlay.getBoundingClientRect();
   const s = currentScale();
-  // Position du doigt → pixels de l'image d'origine, bornée à l'image.
+  // Position du doigt → pixels réels de l'image, bornée à l'image.
   let x = (e.clientX - rect.left) / s;
   let y = (e.clientY - rect.top) / s;
   x = Math.max(0, Math.min(cropImage.naturalWidth, x));
@@ -218,7 +225,18 @@ export async function initCrop(imageDataUrl) {
   try {
     await ensureEngineLoaded();
     await loadImage(cropImage, imageDataUrl);
-    corners = detectCorners(cropImage);
+
+    // On copie la photo sur un canvas à sa VRAIE résolution. C'est CE
+    // canvas qu'on donne à OpenCV (détection) et à jscanify
+    // (redressement), pour que tout soit dans le même repère de pixels.
+    sourceCanvas = document.createElement("canvas");
+    sourceCanvas.width = cropImage.naturalWidth;
+    sourceCanvas.height = cropImage.naturalHeight;
+    sourceCanvas
+      .getContext("2d")
+      .drawImage(cropImage, 0, 0, sourceCanvas.width, sourceCanvas.height);
+
+    corners = detectCorners(sourceCanvas);
     buildOverlay();
     updatePositions();
   } catch (e) {
@@ -243,6 +261,7 @@ export function dewarp() {
   );
   const outW = Math.max(1, Math.round(w));
   const outH = Math.max(1, Math.round(h));
-  const resultCanvas = scanner.extractPaper(cropImage, outW, outH, c);
+  // On redresse depuis le canvas pleine résolution (pas le <img> affiché).
+  const resultCanvas = scanner.extractPaper(sourceCanvas, outW, outH, c);
   return resultCanvas.toDataURL("image/jpeg", 0.92);
 }
