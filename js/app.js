@@ -2,18 +2,19 @@
 // app.js — le "chef d'orchestre" de Scanzen.
 //
 // Il coordonne les écrans et l'état de l'app, et délègue le travail
-// spécialisé aux autres fichiers (camera.js, scanner.js, filters.js).
+// spécialisé aux autres fichiers (camera, scanner, filters, pages).
 // ===================================================================
 
 import { startCamera, stopCamera, capturePhoto } from "./camera.js";
 import { initCrop, dewarp } from "./scanner.js";
 import { applyFilter } from "./filters.js";
+import { addPage, pageCount } from "./pages.js";
 
-// --- État partagé de l'app (il grandira au fil des étapes) ---
+// --- État partagé de l'app ---
 const state = {
   capturedImage: null, // photo brute prise par la caméra
   dewarpedImage: null, // page redressée (avant filtre)
-  filteredImage: null, // page redressée + filtre (résultat final)
+  filteredImage: null, // page redressée + filtre (ce qui sera ajouté)
   activeFilter: "auto", // mode de filtre courant
 };
 
@@ -44,7 +45,7 @@ function loadInto(imgEl, dataUrl) {
   });
 }
 
-// --- Ouvrir la caméra (depuis l'accueil ou "Reprendre") ---
+// --- Ouvrir la caméra (depuis l'accueil, "Reprendre" ou "Ajouter une page") ---
 async function openCamera() {
   showScreen("screen-camera");
   cameraError.hidden = true;
@@ -56,10 +57,11 @@ async function openCamera() {
   }
 }
 
-// --- Fermer la caméra et revenir à l'accueil ---
+// --- Fermer la caméra : on revient à la liste s'il y a déjà des pages,
+//     sinon à l'accueil. ---
 function closeCamera() {
   stopCamera(video);
-  showScreen("screen-home");
+  showScreen(pageCount() > 0 ? "screen-pages" : "screen-home");
 }
 
 // Transforme une erreur technique en message clair pour l'utilisateur.
@@ -80,8 +82,8 @@ async function showResult(dewarpedDataUrl) {
   showScreen("screen-result");
 }
 
-// Applique un mode (original/auto/bw), met à jour l'image affichée et
-// surligne le bouton actif.
+// Applique un mode (original/auto/bw), met à jour l'image et surligne
+// le bouton actif.
 function setFilter(mode) {
   state.activeFilter = mode;
   state.filteredImage = applyFilter(sourceImg, mode);
@@ -139,8 +141,19 @@ filterButtons.forEach((b) =>
   b.addEventListener("click", () => setFilter(b.dataset.filter))
 );
 
-// Résultat → "Nouveau scan" : retour à l'accueil (provisoire ; la
-// liste des pages arrive à l'étape 5).
-document.getElementById("btn-result-restart").addEventListener("click", () => {
-  showScreen("screen-home");
+// Résultat → "Reprendre" : on jette cette page et on relance la caméra
+document.getElementById("btn-result-retake").addEventListener("click", openCamera);
+
+// Résultat → "Ajouter" : on ajoute la page à la liste et on l'affiche
+document.getElementById("btn-add-to-list").addEventListener("click", () => {
+  addPage(state.filteredImage);
+  showScreen("screen-pages");
+});
+
+// Liste → "+ Ajouter une page" : on relance la caméra
+document.getElementById("btn-add-page").addEventListener("click", openCamera);
+
+// Liste → "Exporter en PDF" : viendra à l'étape 6.
+document.getElementById("btn-export").addEventListener("click", () => {
+  alert("Export PDF : c'est l'étape 6, juste après !");
 });

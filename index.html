@@ -119,7 +119,27 @@
     </div>
 
     <div class="preview__actions">
-      <button class="btn-primary" id="btn-result-restart" type="button">Nouveau scan</button>
+      <button class="btn-secondary btn-secondary--light" id="btn-result-retake" type="button">Reprendre</button>
+      <button class="btn-primary" id="btn-add-to-list" type="button">Ajouter</button>
+    </div>
+  </section>
+
+  <!-- =========================================================
+       ÉCRAN LISTE DES PAGES
+       Les vignettes (avec monter / descendre / supprimer) sont
+       générées par pages.js.
+       ========================================================= -->
+  <section class="screen screen--pages" id="screen-pages">
+    <header class="pages__top">
+      <span class="wordmark">Scanzen</span>
+      <span class="pages__count" id="pages-count">0 page</span>
+    </header>
+
+    <div class="pages__list" id="pages-list"></div>
+
+    <div class="pages__actions">
+      <button class="btn-secondary" id="btn-add-page" type="button">+ Ajouter une page</button>
+      <button class="btn-primary" id="btn-export" type="button">Exporter en PDF</button>
     </div>
   </section>
 

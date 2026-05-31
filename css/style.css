@@ -401,3 +401,96 @@ body {
   background: var(--accent);
   border-color: var(--accent);
 }
+
+/* ===================================================================
+   ÉCRAN LISTE DES PAGES (fond clair)
+   =================================================================== */
+.pages__top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 20px 24px;
+  padding-top: calc(20px + env(safe-area-inset-top));
+}
+.pages__count {
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.pages__list {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 4px 16px 12px;
+}
+.pages__empty {
+  color: var(--muted);
+  text-align: center;
+  margin-top: 48px;
+}
+
+.page-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid #e8e8e8;
+  border-radius: 14px;
+}
+.page-card__num {
+  color: var(--muted);
+  font-weight: 700;
+  width: 16px;
+  text-align: center;
+}
+.page-card__thumb {
+  width: 54px;
+  height: 72px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid #e8e8e8;
+  background: #f4f4f4;
+}
+.page-card__controls {
+  margin-left: auto;
+  display: flex;
+  gap: 6px;
+}
+.page-ctrl {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  border: 1px solid #e8e8e8;
+  background: #fff;
+  color: var(--ink);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.page-ctrl:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+.page-card__del {
+  color: #c0392b;
+}
+
+.pages__actions {
+  display: flex;
+  gap: 12px;
+  padding: 16px 20px;
+  padding-bottom: calc(16px + env(safe-area-inset-bottom));
+  border-top: 1px solid #e8e8e8;
+}
+.pages__actions .btn-secondary,
+.pages__actions .btn-primary {
+  flex: 1;
+}
+.btn-primary:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
