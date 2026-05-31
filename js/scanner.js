@@ -1,44 +1,37 @@
 // ===================================================================
-// scanner.js — détection des coins du document + redressement.
+// scanner.js — recadrage RECTANGULAIRE du document.
 //
-// On s'appuie sur jscanify, qui s'appuie lui-même sur OpenCV.js.
-// Ces deux librairies sont lourdes : on ne les charge QU'UNE FOIS,
-// et seulement au premier recadrage (pas au démarrage de l'app).
+// On détecte automatiquement le document (jscanify/OpenCV) pour placer
+// un rectangle de départ, puis l'utilisateur ajuste les 4 CÔTÉS
+// (haut / bas / gauche / droite). Le recadrage est un simple découpage
+// 1:1 (donc net, sans rééchantillonnage). Pas de correction de
+// perspective : adapté aux documents photographiés bien à plat.
 //
-// ⚠️ Piège important : cv.imread(<img>) lit l'image à sa taille
-// AFFICHÉE à l'écran, pas à sa résolution réelle. On dessine donc
-// d'abord la photo sur un canvas à sa VRAIE résolution, et on utilise
-// ce canvas partout (détection ET redressement). Sinon les coins
-// (en pixels réels) ne correspondraient pas à l'image lue → document
-// rétréci dans un coin + flou.
+// ⚠️ cv.imread(<img>) lit l'image à sa taille AFFICHÉE, pas à sa
+// résolution réelle. On dessine donc la photo sur un canvas à sa vraie
+// résolution et on travaille dessus.
 // ===================================================================
 
 const OPENCV_URL = "https://docs.opencv.org/4.7.0/opencv.js";
 const JSCANIFY_URL =
   "https://cdn.jsdelivr.net/gh/ColonelParrot/jscanify@master/src/jscanify.min.js";
 
-// Éléments de l'écran de recadrage
 const cropImage = document.getElementById("crop-image");
 const overlay = document.getElementById("crop-overlay");
 const loading = document.getElementById("crop-loading");
 
-// Ordre des coins pour tracer le quadrilatère (sens horaire).
-const CORNER_KEYS = [
-  "topLeftCorner",
-  "topRightCorner",
-  "bottomRightCorner",
-  "bottomLeftCorner",
-];
-
-let enginePromise = null; // promesse de chargement du moteur (1 seule fois)
-let scanner = null; // instance jscanify
-let sourceCanvas = null; // la photo dessinée à sa VRAIE résolution
-let corners = null; // coins courants, EN PIXELS RÉELS de l'image
-let poly = null; // le polygone SVG
-let handleEls = {}; // les poignées SVG, rangées par coin
-let dragKey = null; // quel coin est en train d'être déplacé
-
+const EDGES = ["top", "bottom", "left", "right"];
+const MIN_SIZE = 40; // taille mini du rectangle, en pixels réels
 const SVGNS = "http://www.w3.org/2000/svg";
+
+let enginePromise = null;
+let scanner = null;
+let sourceCanvas = null; // la photo à sa VRAIE résolution
+let rect = null; // { left, top, right, bottom } en pixels réels
+let cropRect = null; // le rectangle SVG
+let shades = {}; // les 4 zones sombres autour du rectangle
+let handleEls = {}; // les poignées de bord
+let dragEdge = null;
 
 // --- Chargement des librairies -------------------------------------
 
@@ -52,8 +45,6 @@ function loadScript(src) {
   });
 }
 
-// Charge OpenCV, attend que son moteur WASM soit prêt, puis charge
-// jscanify et crée l'instance. Mémorisé pour ne le faire qu'une fois.
 export function ensureEngineLoaded() {
   if (enginePromise) return enginePromise;
   enginePromise = (async () => {
@@ -72,7 +63,7 @@ export function ensureEngineLoaded() {
   return enginePromise;
 }
 
-// --- Détection des coins -------------------------------------------
+// --- Détection du rectangle de départ ------------------------------
 
 function loadImage(imgEl, src) {
   return new Promise((resolve, reject) => {
@@ -82,153 +73,164 @@ function loadImage(imgEl, src) {
   });
 }
 
-function distance(a, b) {
-  return Math.hypot(a.x - b.x, a.y - b.y);
+// Rectangle par défaut : marge de 6 % (si la détection échoue).
+function defaultRect(src) {
+  const mx = src.width * 0.06;
+  const my = src.height * 0.06;
+  return { left: mx, top: my, right: src.width - mx, bottom: src.height - my };
 }
 
-// Quadrilatère "par défaut" (marge de 8 %), au cas où la détection
-// automatique échoue : l'utilisateur ajustera les coins à la main.
-// `src` est le canvas source (donc src.width/height = résolution réelle).
-function defaultCorners(src) {
-  const w = src.width;
-  const h = src.height;
-  const mx = w * 0.08;
-  const my = h * 0.08;
-  return {
-    topLeftCorner: { x: mx, y: my },
-    topRightCorner: { x: w - mx, y: my },
-    bottomRightCorner: { x: w - mx, y: h - my },
-    bottomLeftCorner: { x: mx, y: h - my },
-  };
-}
-
-// Vérifie que les coins détectés sont plausibles (pas de NaN, aire
-// suffisante). Sinon on retombe sur les coins par défaut.
-function validCorners(c, src) {
-  for (const k of CORNER_KEYS) {
-    const p = c[k];
-    if (!p || !isFinite(p.x) || !isFinite(p.y)) return false;
-  }
-  const pts = CORNER_KEYS.map((k) => c[k]);
-  let area = 0;
-  for (let i = 0; i < pts.length; i++) {
-    const a = pts[i];
-    const b = pts[(i + 1) % pts.length];
-    area += a.x * b.y - b.x * a.y;
-  }
-  area = Math.abs(area) / 2;
-  return area > 0.15 * src.width * src.height;
-}
-
-function detectCorners(src) {
+// Détecte le document et renvoie sa "boîte englobante" (rectangle droit).
+function detectRect(src) {
   try {
     const mat = window.cv.imread(src);
     const contour = scanner.findPaperContour(mat);
-    let c = null;
+    let r = null;
     if (contour) {
+      let c = null;
       try {
         c = scanner.getCornerPoints(contour);
       } catch (e) {
         c = null;
       }
       if (contour.delete) contour.delete();
+      if (c) {
+        const xs = [
+          c.topLeftCorner, c.topRightCorner, c.bottomLeftCorner, c.bottomRightCorner,
+        ].filter(Boolean).map((p) => p.x);
+        const ys = [
+          c.topLeftCorner, c.topRightCorner, c.bottomLeftCorner, c.bottomRightCorner,
+        ].filter(Boolean).map((p) => p.y);
+        if (xs.length === 4 && ys.every(isFinite) && xs.every(isFinite)) {
+          const left = Math.max(0, Math.min(...xs));
+          const top = Math.max(0, Math.min(...ys));
+          const right = Math.min(src.width, Math.max(...xs));
+          const bottom = Math.min(src.height, Math.max(...ys));
+          // garde-fou : le rectangle doit être assez grand pour être crédible
+          if (right - left > src.width * 0.2 && bottom - top > src.height * 0.2) {
+            r = { left, top, right, bottom };
+          }
+        }
+      }
     }
     mat.delete();
-    return c && validCorners(c, src) ? c : defaultCorners(src);
+    return r || defaultRect(src);
   } catch (e) {
-    console.warn("Détection auto impossible, coins par défaut.", e);
-    return defaultCorners(src);
+    console.warn("Détection auto impossible, rectangle par défaut.", e);
+    return defaultRect(src);
   }
 }
 
-// --- Affichage du quadrilatère et des poignées ---------------------
+// --- Affichage du rectangle et des poignées ------------------------
 
-// Rapport entre la taille AFFICHÉE de l'image et sa taille RÉELLE.
 function currentScale() {
-  const rect = cropImage.getBoundingClientRect();
-  return rect.width / cropImage.naturalWidth;
+  const r = cropImage.getBoundingClientRect();
+  return r.width / cropImage.naturalWidth;
+}
+
+function mkEl(tag, cls) {
+  const el = document.createElementNS(SVGNS, tag);
+  el.setAttribute("class", cls);
+  return el;
 }
 
 function buildOverlay() {
   overlay.innerHTML = "";
 
-  poly = document.createElementNS(SVGNS, "polygon");
-  poly.setAttribute("class", "crop__poly");
-  overlay.appendChild(poly);
+  // Zones sombres autour du rectangle (pour bien voir la découpe).
+  shades = {};
+  for (const k of ["top", "bottom", "left", "right"]) {
+    shades[k] = mkEl("rect", "crop__shade");
+    overlay.appendChild(shades[k]);
+  }
 
+  // Le rectangle de découpe.
+  cropRect = mkEl("rect", "crop__rect");
+  overlay.appendChild(cropRect);
+
+  // Une poignée au milieu de chaque côté.
   handleEls = {};
-  for (const key of CORNER_KEYS) {
-    const dot = document.createElementNS(SVGNS, "circle"); // poignée visible
-    dot.setAttribute("class", "crop__dot");
-    dot.setAttribute("r", "10");
-
-    const hit = document.createElementNS(SVGNS, "circle"); // zone tactile
-    hit.setAttribute("class", "crop__hit");
-    hit.setAttribute("r", "22");
-    hit.dataset.corner = key;
+  for (const edge of EDGES) {
+    const dot = mkEl("circle", "crop__dot");
+    dot.setAttribute("r", "9");
+    const hit = mkEl("circle", "crop__hit");
+    hit.setAttribute("r", "24");
+    hit.dataset.edge = edge;
     hit.addEventListener("pointerdown", onHandleDown);
-
     overlay.appendChild(dot);
     overlay.appendChild(hit);
-    handleEls[key] = { dot, hit };
+    handleEls[edge] = { dot, hit };
   }
 }
 
-// Place le polygone et les poignées d'après les coins courants.
+function setRectAttr(el, x, y, w, h) {
+  el.setAttribute("x", x);
+  el.setAttribute("y", y);
+  el.setAttribute("width", Math.max(0, w));
+  el.setAttribute("height", Math.max(0, h));
+}
+
 function updatePositions() {
-  if (!corners || !poly) return;
+  if (!rect || !cropRect) return;
   const s = currentScale();
-  const pts = CORNER_KEYS.map((k) => [corners[k].x * s, corners[k].y * s]);
-  poly.setAttribute("points", pts.map((p) => p.join(",")).join(" "));
-  CORNER_KEYS.forEach((k, i) => {
-    const { dot, hit } = handleEls[k];
-    dot.setAttribute("cx", pts[i][0]);
-    dot.setAttribute("cy", pts[i][1]);
-    hit.setAttribute("cx", pts[i][0]);
-    hit.setAttribute("cy", pts[i][1]);
-  });
+  const L = rect.left * s, T = rect.top * s, R = rect.right * s, B = rect.bottom * s;
+  const W = cropImage.naturalWidth * s, H = cropImage.naturalHeight * s;
+
+  setRectAttr(cropRect, L, T, R - L, B - T);
+  setRectAttr(shades.top, 0, 0, W, T);
+  setRectAttr(shades.bottom, 0, B, W, H - B);
+  setRectAttr(shades.left, 0, T, L, B - T);
+  setRectAttr(shades.right, R, T, W - R, B - T);
+
+  const place = (edge, x, y) => {
+    const { dot, hit } = handleEls[edge];
+    dot.setAttribute("cx", x); dot.setAttribute("cy", y);
+    hit.setAttribute("cx", x); hit.setAttribute("cy", y);
+  };
+  place("top", (L + R) / 2, T);
+  place("bottom", (L + R) / 2, B);
+  place("left", L, (T + B) / 2);
+  place("right", R, (T + B) / 2);
 }
 
 function onHandleDown(e) {
-  dragKey = e.currentTarget.dataset.corner;
+  dragEdge = e.currentTarget.dataset.edge;
   e.preventDefault();
 }
 
 function onHandleMove(e) {
-  if (!dragKey) return;
-  const rect = overlay.getBoundingClientRect();
+  if (!dragEdge) return;
+  const r = overlay.getBoundingClientRect();
   const s = currentScale();
-  // Position du doigt → pixels réels de l'image, bornée à l'image.
-  let x = (e.clientX - rect.left) / s;
-  let y = (e.clientY - rect.top) / s;
-  x = Math.max(0, Math.min(cropImage.naturalWidth, x));
-  y = Math.max(0, Math.min(cropImage.naturalHeight, y));
-  corners[dragKey] = { x, y };
+  const x = (e.clientX - r.left) / s; // pixels réels
+  const y = (e.clientY - r.top) / s;
+  const W = cropImage.naturalWidth, H = cropImage.naturalHeight;
+
+  if (dragEdge === "top") rect.top = Math.max(0, Math.min(y, rect.bottom - MIN_SIZE));
+  else if (dragEdge === "bottom") rect.bottom = Math.min(H, Math.max(y, rect.top + MIN_SIZE));
+  else if (dragEdge === "left") rect.left = Math.max(0, Math.min(x, rect.right - MIN_SIZE));
+  else if (dragEdge === "right") rect.right = Math.min(W, Math.max(x, rect.left + MIN_SIZE));
+
   updatePositions();
 }
 
 function onHandleUp() {
-  dragKey = null;
+  dragEdge = null;
 }
 
-// Écouteurs "globaux" : le doigt est suivi même s'il sort de la
-// poignée. Ajoutés une seule fois (au chargement du module).
 window.addEventListener("pointermove", onHandleMove);
 window.addEventListener("pointerup", onHandleUp);
 window.addEventListener("resize", updatePositions);
 
 // --- Fonctions utilisées par app.js --------------------------------
 
-// Prépare l'écran de recadrage à partir de la photo capturée.
 export async function initCrop(imageDataUrl) {
   loading.hidden = false;
   try {
     await ensureEngineLoaded();
     await loadImage(cropImage, imageDataUrl);
 
-    // On copie la photo sur un canvas à sa VRAIE résolution. C'est CE
-    // canvas qu'on donne à OpenCV (détection) et à jscanify
-    // (redressement), pour que tout soit dans le même repère de pixels.
+    // Photo à sa VRAIE résolution (voir l'avertissement en tête de fichier).
     sourceCanvas = document.createElement("canvas");
     sourceCanvas.width = cropImage.naturalWidth;
     sourceCanvas.height = cropImage.naturalHeight;
@@ -236,7 +238,7 @@ export async function initCrop(imageDataUrl) {
       .getContext("2d")
       .drawImage(cropImage, 0, 0, sourceCanvas.width, sourceCanvas.height);
 
-    corners = detectCorners(sourceCanvas);
+    rect = detectRect(sourceCanvas);
     buildOverlay();
     updatePositions();
   } catch (e) {
@@ -247,21 +249,18 @@ export async function initCrop(imageDataUrl) {
   loading.hidden = true;
 }
 
-// Redresse le document selon les coins courants et renvoie l'image
-// à plat (data URL JPEG).
-export function dewarp() {
-  const c = corners;
-  const w = Math.max(
-    distance(c.topLeftCorner, c.topRightCorner),
-    distance(c.bottomLeftCorner, c.bottomRightCorner)
-  );
-  const h = Math.max(
-    distance(c.topLeftCorner, c.bottomLeftCorner),
-    distance(c.topRightCorner, c.bottomRightCorner)
-  );
-  const outW = Math.max(1, Math.round(w));
-  const outH = Math.max(1, Math.round(h));
-  // On redresse depuis le canvas pleine résolution (pas le <img> affiché).
-  const resultCanvas = scanner.extractPaper(sourceCanvas, outW, outH, c);
-  return resultCanvas.toDataURL("image/jpeg", 0.92);
+// Découpe le rectangle choisi et renvoie un CANVAS plein résolution
+// (pas de JPEG ici : on garde la qualité maximale pour le filtre).
+export function cropToCanvas() {
+  const left = Math.round(rect.left);
+  const top = Math.round(rect.top);
+  const w = Math.max(1, Math.round(rect.right - rect.left));
+  const h = Math.max(1, Math.round(rect.bottom - rect.top));
+
+  const out = document.createElement("canvas");
+  out.width = w;
+  out.height = h;
+  // Découpage 1:1 depuis la photo pleine résolution → net.
+  out.getContext("2d").drawImage(sourceCanvas, left, top, w, h, 0, 0, w, h);
+  return out;
 }

@@ -6,7 +6,7 @@
 // ===================================================================
 
 import { startCamera, stopCamera, capturePhoto } from "./camera.js";
-import { initCrop, dewarp } from "./scanner.js";
+import { initCrop, cropToCanvas } from "./scanner.js";
 import { applyFilter } from "./filters.js";
 import { addPage, pageCount, getPages } from "./pages.js";
 import { exportPdf } from "./pdf.js";
@@ -14,8 +14,8 @@ import { exportPdf } from "./pdf.js";
 // --- État partagé de l'app ---
 const state = {
   capturedImage: null, // photo brute prise par la caméra
-  dewarpedImage: null, // page redressée (avant filtre)
-  filteredImage: null, // page redressée + filtre (ce qui sera ajouté)
+  croppedCanvas: null, // le rognage (canvas plein résolution, avant filtre)
+  filteredImage: null, // rognage + filtre (ce qui sera ajouté à la liste)
   activeFilter: "auto", // mode de filtre courant
 };
 
@@ -28,23 +28,11 @@ const resultImage = document.getElementById("result-image");
 const filterButtons = document.querySelectorAll(".filter-btn");
 const exportBtn = document.getElementById("btn-export");
 
-// Image "source" (la page redressée) sur laquelle on applique les filtres.
-const sourceImg = new Image();
-
 // --- Navigation entre écrans : un seul visible à la fois ---
 const screens = document.querySelectorAll(".screen");
 function showScreen(id) {
   screens.forEach((screen) => screen.classList.remove("screen--active"));
   document.getElementById(id).classList.add("screen--active");
-}
-
-// Charge une data URL dans une <img> et attend qu'elle soit prête.
-function loadInto(imgEl, dataUrl) {
-  return new Promise((resolve, reject) => {
-    imgEl.onload = () => resolve();
-    imgEl.onerror = () => reject(new Error("Image illisible"));
-    imgEl.src = dataUrl;
-  });
 }
 
 // --- Ouvrir la caméra (accueil, "Reprendre" ou "Ajouter une page") ---
@@ -66,7 +54,6 @@ function closeCamera() {
   showScreen(pageCount() > 0 ? "screen-pages" : "screen-home");
 }
 
-// Transforme une erreur technique en message clair pour l'utilisateur.
 function describeCameraError(err) {
   if (err && err.name === "NotAllowedError") {
     return "Accès à la caméra refusé. Autorisez-la dans les réglages du navigateur, puis réessayez.";
@@ -77,9 +64,8 @@ function describeCameraError(err) {
   return "Impossible d'accéder à la caméra. Vérifiez que la page est ouverte en HTTPS ou sur localhost.";
 }
 
-// --- Écran résultat : affiche la page redressée + applique un filtre ---
-async function showResult(dewarpedDataUrl) {
-  await loadInto(sourceImg, dewarpedDataUrl);
+// --- Écran résultat : applique un filtre au rognage et l'affiche ---
+function showResult() {
   setFilter(state.activeFilter || "auto");
   showScreen("screen-result");
 }
@@ -88,7 +74,7 @@ async function showResult(dewarpedDataUrl) {
 // le bouton actif.
 function setFilter(mode) {
   state.activeFilter = mode;
-  state.filteredImage = applyFilter(sourceImg, mode);
+  state.filteredImage = applyFilter(state.croppedCanvas, mode);
   resultImage.src = state.filteredImage;
   filterButtons.forEach((b) =>
     b.classList.toggle("filter-btn--active", b.dataset.filter === mode)
@@ -99,10 +85,8 @@ function setFilter(mode) {
 // Branchement des boutons
 // ===================================================================
 
-// Accueil → ouvrir la caméra
 document.getElementById("btn-scan").addEventListener("click", openCamera);
 
-// Caméra → fermer
 document.getElementById("btn-close-camera").addEventListener("click", closeCamera);
 document.getElementById("btn-camera-back").addEventListener("click", closeCamera);
 
@@ -114,27 +98,26 @@ document.getElementById("btn-capture").addEventListener("click", () => {
   showScreen("screen-preview");
 });
 
-// Aperçu → "Reprendre" : on relance la caméra
+// Aperçu → "Reprendre"
 document.getElementById("btn-retake").addEventListener("click", openCamera);
 
-// Aperçu → "Continuer" : on passe au recadrage (détection des coins)
+// Aperçu → "Continuer" : on passe au recadrage
 document.getElementById("btn-use").addEventListener("click", async () => {
   showScreen("screen-crop");
   await initCrop(state.capturedImage);
 });
 
-// Recadrage → "Reprendre" : revenir à la caméra
+// Recadrage → "Reprendre"
 document.getElementById("btn-crop-back").addEventListener("click", openCamera);
 
-// Recadrage → "Redresser" : on corrige la perspective puis on affiche
-// le résultat (avec le filtre par défaut).
-document.getElementById("btn-crop-confirm").addEventListener("click", async () => {
+// Recadrage → "Rogner" : on découpe le rectangle puis on affiche le résultat
+document.getElementById("btn-crop-confirm").addEventListener("click", () => {
   try {
-    state.dewarpedImage = dewarp();
-    await showResult(state.dewarpedImage);
+    state.croppedCanvas = cropToCanvas();
+    showResult();
   } catch (e) {
     console.error(e);
-    alert("Le redressement a échoué. Essaie de réajuster les coins.");
+    alert("Le rognage a échoué. Réessaie.");
   }
 });
 
@@ -146,16 +129,16 @@ filterButtons.forEach((b) =>
 // Résultat → "Reprendre" : on jette cette page et on relance la caméra
 document.getElementById("btn-result-retake").addEventListener("click", openCamera);
 
-// Résultat → "Ajouter" : on ajoute la page à la liste et on l'affiche
+// Résultat → "Ajouter" : on ajoute la page à la liste
 document.getElementById("btn-add-to-list").addEventListener("click", () => {
   addPage(state.filteredImage);
   showScreen("screen-pages");
 });
 
-// Liste → "+ Ajouter une page" : on relance la caméra
+// Liste → "+ Ajouter une page"
 document.getElementById("btn-add-page").addEventListener("click", openCamera);
 
-// Liste → "Exporter en PDF" : on assemble toutes les pages en un PDF.
+// Liste → "Exporter en PDF"
 exportBtn.addEventListener("click", async () => {
   const pages = getPages();
   if (pages.length === 0) return;

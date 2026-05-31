@@ -329,11 +329,15 @@ body {
   touch-action: none;
 }
 
-/* Le quadrilatère de découpe */
-.crop__poly {
-  fill: rgba(37, 99, 235, 0.12);
+/* Le rectangle de découpe */
+.crop__rect {
+  fill: none;
   stroke: var(--accent);
   stroke-width: 2;
+}
+/* Zones sombres autour du rectangle (mettent en valeur la découpe) */
+.crop__shade {
+  fill: rgba(0, 0, 0, 0.5);
 }
 /* La poignée visible */
 .crop__dot {
