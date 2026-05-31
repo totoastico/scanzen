@@ -1,0 +1,289 @@
+/* ===================================================================
+   Scanzen — feuille de style
+   Direction artistique : minimal, noir & blanc, UNE couleur d'accent,
+   beaucoup d'espace blanc, gros bouton central.
+   =================================================================== */
+
+/* --- Variables : toute l'identité visuelle se règle ici ---
+   Pour changer la couleur d'accent de l'app, modifie --accent. */
+:root {
+  --bg: #ffffff;            /* fond */
+  --ink: #0a0a0a;           /* texte principal (presque noir) */
+  --muted: #8a8a8a;         /* texte secondaire (gris) */
+  --accent: #2563eb;        /* LA couleur d'accent (action principale) */
+  --accent-press: #1e4fd0;  /* accent quand on appuie */
+}
+
+/* --- Remise à zéro douce des marges par défaut --- */
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+
+  /* Confort "appli" sur mobile : pas de sélection de texte ni de
+     surlignage bleu au toucher. */
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* --- Système d'écrans : un seul visible à la fois ---
+   100dvh = hauteur réelle de l'écran sur mobile (barre d'adresse comprise). */
+.screen {
+  display: none;
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+.screen--active {
+  display: flex;
+  flex-direction: column;
+}
+
+/* --- Barre du haut --- */
+.topbar {
+  padding: 20px 24px;
+  /* On laisse de la place pour l'encoche du haut (iPhone, etc.) */
+  padding-top: calc(20px + env(safe-area-inset-top));
+}
+.wordmark {
+  font-weight: 800;
+  font-size: 20px;
+  letter-spacing: -0.02em;
+}
+
+/* --- Écran d'accueil --- */
+.home {
+  flex: 1;                  /* occupe tout l'espace restant */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;  /* centre verticalement */
+  text-align: center;
+  padding: 24px;
+  padding-bottom: calc(24px + env(safe-area-inset-bottom));
+  gap: 12px;
+}
+.home__title {
+  font-size: clamp(32px, 9vw, 44px);
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  line-height: 1.05;
+  max-width: 12ch;          /* force un joli retour à la ligne */
+}
+.home__subtitle {
+  color: var(--muted);
+  font-size: 17px;
+  margin-bottom: 28px;
+}
+
+/* --- LE bouton central de l'accueil (dominant) --- */
+.scan-button {
+  width: 220px;
+  height: 220px;
+  border-radius: 50%;
+  border: none;
+  background: var(--accent);
+  color: #fff;
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  cursor: pointer;
+  box-shadow: 0 10px 30px rgba(37, 99, 235, 0.28);
+  /* supprime le délai de tap et le zoom double-tap sur mobile */
+  touch-action: manipulation;
+  transition: transform 0.08s ease, background 0.15s ease;
+}
+.scan-button:active {
+  transform: scale(0.96);
+  background: var(--accent-press);
+}
+
+.home__note {
+  color: var(--muted);
+  font-size: 13px;
+  margin-top: 28px;
+}
+
+/* ===================================================================
+   ÉCRANS CAMÉRA & APERÇU (fond noir, plein écran)
+   =================================================================== */
+.screen--camera,
+.screen--preview {
+  background: #000;
+  color: #fff;
+  position: relative;
+}
+
+/* --- Le flux vidéo, en plein écran --- */
+.camera__video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;   /* remplit l'écran (peut rogner un peu les bords) */
+  background: #000;
+}
+
+/* --- Barres par-dessus la vidéo --- */
+.camera__top {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 2;
+  padding: 16px;
+  padding-top: calc(16px + env(safe-area-inset-top));
+}
+.camera__bottom {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 2;
+  display: flex;
+  justify-content: center;
+  padding: 28px;
+  padding-bottom: calc(28px + env(safe-area-inset-bottom));
+}
+
+/* --- Bouton de capture (LE bouton dominant de la caméra) --- */
+.shutter {
+  width: 76px;
+  height: 76px;
+  border-radius: 50%;
+  border: none;
+  background: #fff;
+  cursor: pointer;
+  box-shadow: 0 0 0 6px rgba(255, 255, 255, 0.3); /* anneau translucide */
+  touch-action: manipulation;
+  transition: transform 0.08s ease;
+}
+.shutter:active {
+  transform: scale(0.92);
+}
+
+/* --- Petit bouton rond (fermer) --- */
+.icon-button {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(0, 0, 0, 0.4);
+  color: #fff;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  touch-action: manipulation;
+}
+
+/* --- Message d'erreur caméra (par-dessus tout) --- */
+.camera__error {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  background: #000;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  padding: 32px;
+  text-align: center;
+}
+.camera__error[hidden] {
+  display: none;
+}
+.camera__error p {
+  color: #d8d8d8;
+  font-size: 16px;
+  line-height: 1.5;
+  max-width: 36ch;
+}
+
+/* --- Écran d'aperçu de la photo --- */
+.preview {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  padding-top: calc(16px + env(safe-area-inset-top));
+  overflow: hidden;
+}
+.preview__image {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;   /* on voit toute la photo, sans la rogner */
+  border-radius: 4px;
+}
+.preview__actions {
+  display: flex;
+  gap: 12px;
+  padding: 20px;
+  padding-bottom: calc(20px + env(safe-area-inset-bottom));
+}
+.preview__actions button {
+  flex: 1;   /* les deux boutons se partagent la largeur */
+}
+
+/* ===================================================================
+   BOUTONS RÉUTILISABLES
+   =================================================================== */
+
+/* --- Bouton principal (accent) --- */
+.btn-primary {
+  border: none;
+  background: var(--accent);
+  color: #fff;
+  font-size: 16px;
+  font-weight: 700;
+  padding: 16px 28px;
+  border-radius: 999px;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.btn-primary:active {
+  background: var(--accent-press);
+}
+
+/* --- Bouton secondaire (contour, discret) --- */
+.btn-secondary {
+  border: 1.5px solid var(--ink);
+  background: transparent;
+  color: var(--ink);
+  font-size: 16px;
+  font-weight: 600;
+  padding: 14px 28px;
+  border-radius: 999px;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.btn-secondary:active {
+  background: var(--ink);
+  color: #fff;
+}
+
+/* --- Variante claire du bouton secondaire (sur fond noir) --- */
+.btn-secondary--light {
+  border-color: rgba(255, 255, 255, 0.6);
+  color: #fff;
+}
+.btn-secondary--light:active {
+  background: #fff;
+  color: #000;
+}

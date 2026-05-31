@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+
+  <!-- Mobile-first : on adapte la largeur à l'écran du téléphone.
+       viewport-fit=cover : on occupe tout l'écran, encoches comprises. -->
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+
+  <!-- Couleur de la barre du navigateur sur mobile -->
+  <meta name="theme-color" content="#ffffff" />
+
+  <title>Scanzen — Scanner de documents</title>
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+
+  <!-- =========================================================
+       ÉCRAN D'ACCUEIL
+       Un seul écran est visible à la fois (classe "screen--active").
+       ========================================================= -->
+  <section class="screen screen--active" id="screen-home">
+    <header class="topbar">
+      <span class="wordmark">Scanzen</span>
+    </header>
+
+    <div class="home">
+      <h1 class="home__title">Scannez vos documents</h1>
+      <p class="home__subtitle">Une photo, un PDF net. C'est tout.</p>
+
+      <!-- LE bouton central : l'élément dominant de l'interface -->
+      <button class="scan-button" id="btn-scan" type="button">
+        Scanner
+      </button>
+
+      <p class="home__note">Tout reste sur votre téléphone.</p>
+    </div>
+  </section>
+
+  <!-- =========================================================
+       ÉCRAN CAMÉRA
+       La vidéo remplit l'écran ; par-dessus : un bouton "fermer"
+       en haut et le gros bouton de capture en bas.
+       ========================================================= -->
+  <section class="screen screen--camera" id="screen-camera">
+    <!-- Le flux vidéo de la caméra (rempli au démarrage par camera.js) -->
+    <video class="camera__video" id="camera-video" autoplay playsinline muted></video>
+
+    <!-- Barre du haut : fermer -->
+    <div class="camera__top">
+      <button class="icon-button" id="btn-close-camera" type="button" aria-label="Fermer">✕</button>
+    </div>
+
+    <!-- Barre du bas : bouton de capture (dominant) -->
+    <div class="camera__bottom">
+      <button class="shutter" id="btn-capture" type="button" aria-label="Capturer la photo"></button>
+    </div>
+
+    <!-- Message d'erreur (caché par défaut) si la caméra est refusée/absente -->
+    <div class="camera__error" id="camera-error" hidden>
+      <p id="camera-error-text">Impossible d'accéder à la caméra.</p>
+      <button class="btn-secondary btn-secondary--light" id="btn-camera-back" type="button">Retour</button>
+    </div>
+  </section>
+
+  <!-- =========================================================
+       ÉCRAN APERÇU
+       Montre la photo capturée. "Reprendre" relance la caméra,
+       "Continuer" mènera au recadrage (étape 3).
+       ========================================================= -->
+  <section class="screen screen--preview" id="screen-preview">
+    <div class="preview">
+      <img class="preview__image" id="preview-image" alt="Photo capturée" />
+    </div>
+    <div class="preview__actions">
+      <button class="btn-secondary btn-secondary--light" id="btn-retake" type="button">Reprendre</button>
+      <button class="btn-primary" id="btn-use" type="button">Continuer</button>
+    </div>
+  </section>
+
+  <!-- type="module" : permet d'utiliser import/export entre nos fichiers JS -->
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

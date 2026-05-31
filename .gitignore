@@ -1,0 +1,7 @@
+# Fichiers système (Windows / macOS)
+desktop.ini
+Thumbs.db
+.DS_Store
+
+# Dossiers d'outils éventuels
+node_modules/
