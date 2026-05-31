@@ -189,7 +189,7 @@ exportBtn.addEventListener("click", async () => {
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
     navigator.serviceWorker
-      .register("service-worker.js")
+      .register("service-worker.js", { updateViaCache: "none" })
       .catch((err) => console.warn("Service worker non enregistré :", err));
   });
 }

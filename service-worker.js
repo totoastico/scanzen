@@ -1,14 +1,14 @@
 // ===================================================================
 // service-worker.js — rend Scanzen installable et utilisable hors-ligne.
 //
-// Stratégie "réseau d'abord" : on tente toujours le réseau (donc tu as
-// la version à jour), et on bascule sur le cache uniquement si tu es
-// hors-ligne. Ça évite de rester bloqué sur une ancienne version.
+// Stratégie "réseau d'abord, sans cache HTTP" pour nos fichiers : on
+// va toujours chercher la version FRAÎCHE sur le serveur (donc plus
+// jamais d'ancienne version coincée en cache), et on ne bascule sur
+// le cache que si tu es hors-ligne.
 // ===================================================================
 
-const CACHE = "scanzen-v1";
+const CACHE = "scanzen-v2";
 
-// Les fichiers de l'app (mis en cache dès l'installation).
 const SHELL = [
   "./",
   "./index.html",
@@ -40,15 +40,23 @@ self.addEventListener("activate", (event) => {
 });
 
 self.addEventListener("fetch", (event) => {
-  if (event.request.method !== "GET") return;
+  const req = event.request;
+  if (req.method !== "GET") return;
+
+  const sameOrigin = new URL(req.url).origin === self.location.origin;
+  // Nos fichiers : on force le réseau frais (no-store). Le CDN (OpenCV…)
+  // garde le cache navigateur normal (rapide).
+  const fetcher = sameOrigin
+    ? fetch(new Request(req.url, { cache: "no-store" }))
+    : fetch(req);
+
   event.respondWith(
-    fetch(event.request)
+    fetcher
       .then((response) => {
-        // On garde une copie en cache (utile hors-ligne, y compris OpenCV).
         const copy = response.clone();
-        caches.open(CACHE).then((cache) => cache.put(event.request, copy)).catch(() => {});
+        caches.open(CACHE).then((cache) => cache.put(req, copy)).catch(() => {});
         return response;
       })
-      .catch(() => caches.match(event.request))
+      .catch(() => caches.match(req))
   );
 });
