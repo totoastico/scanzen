@@ -381,6 +381,31 @@ body {
   display: none;
 }
 
+/* --- Boutons de rotation (écran résultat) --- */
+.result-rotate {
+  display: flex;
+  justify-content: center;
+  gap: 16px;
+  padding: 8px 0 2px;
+}
+.round-btn {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(255, 255, 255, 0.4);
+  background: transparent;
+  color: #fff;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  touch-action: manipulation;
+}
+.round-btn:active {
+  background: rgba(255, 255, 255, 0.18);
+}
+
 /* --- Sélecteur de filtre (écran résultat) --- */
 .filters {
   display: flex;

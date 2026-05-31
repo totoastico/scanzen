@@ -15,8 +15,9 @@ import { exportPdf } from "./pdf.js";
 const state = {
   capturedImage: null, // photo brute prise par la caméra
   croppedCanvas: null, // le rognage (canvas plein résolution, avant filtre)
-  filteredImage: null, // rognage + filtre (ce qui sera ajouté à la liste)
+  filteredImage: null, // rognage + rotation + filtre (ce qui sera ajouté)
   activeFilter: "auto", // mode de filtre courant
+  rotation: 0, // rotation appliquée au résultat (0, 90, 180, 270)
 };
 
 // --- Éléments de la page dont on a besoin ---
@@ -33,6 +34,19 @@ const screens = document.querySelectorAll(".screen");
 function showScreen(id) {
   screens.forEach((screen) => screen.classList.remove("screen--active"));
   document.getElementById(id).classList.add("screen--active");
+}
+
+// Renvoie un canvas pivoté de `deg` degrés (90/180/270).
+function rotateCanvas(canvas, deg) {
+  const swap = deg === 90 || deg === 270;
+  const out = document.createElement("canvas");
+  out.width = swap ? canvas.height : canvas.width;
+  out.height = swap ? canvas.width : canvas.height;
+  const ctx = out.getContext("2d");
+  ctx.translate(out.width / 2, out.height / 2);
+  ctx.rotate((deg * Math.PI) / 180);
+  ctx.drawImage(canvas, -canvas.width / 2, -canvas.height / 2);
+  return out;
 }
 
 // --- Ouvrir la caméra (accueil, "Reprendre" ou "Ajouter une page") ---
@@ -64,21 +78,30 @@ function describeCameraError(err) {
   return "Impossible d'accéder à la caméra. Vérifiez que la page est ouverte en HTTPS ou sur localhost.";
 }
 
-// --- Écran résultat : applique un filtre au rognage et l'affiche ---
+// --- Écran résultat : applique rotation + filtre au rognage ---
 function showResult() {
   setFilter(state.activeFilter || "auto");
   showScreen("screen-result");
 }
 
-// Applique un mode (original/auto/bw), met à jour l'image et surligne
-// le bouton actif.
+// Applique la rotation courante puis le mode (original/auto/bw), met à
+// jour l'image affichée et surligne le bouton de filtre actif.
 function setFilter(mode) {
   state.activeFilter = mode;
-  state.filteredImage = applyFilter(state.croppedCanvas, mode);
+  const source = state.rotation
+    ? rotateCanvas(state.croppedCanvas, state.rotation)
+    : state.croppedCanvas;
+  state.filteredImage = applyFilter(source, mode);
   resultImage.src = state.filteredImage;
   filterButtons.forEach((b) =>
     b.classList.toggle("filter-btn--active", b.dataset.filter === mode)
   );
+}
+
+// Tourne le résultat de ±90° et rafraîchit l'affichage.
+function rotate(delta) {
+  state.rotation = (state.rotation + delta + 360) % 360;
+  setFilter(state.activeFilter);
 }
 
 // ===================================================================
@@ -114,6 +137,7 @@ document.getElementById("btn-crop-back").addEventListener("click", openCamera);
 document.getElementById("btn-crop-confirm").addEventListener("click", () => {
   try {
     state.croppedCanvas = cropToCanvas();
+    state.rotation = 0; // nouveau scan = pas de rotation au départ
     showResult();
   } catch (e) {
     console.error(e);
@@ -121,10 +145,14 @@ document.getElementById("btn-crop-confirm").addEventListener("click", () => {
   }
 });
 
-// Boutons de filtre (Original / Auto / N&B)
+// Boutons de filtre (Original / Auto / Noir & blanc)
 filterButtons.forEach((b) =>
   b.addEventListener("click", () => setFilter(b.dataset.filter))
 );
+
+// Boutons de rotation (gauche / droite)
+document.getElementById("btn-rotate-left").addEventListener("click", () => rotate(-90));
+document.getElementById("btn-rotate-right").addEventListener("click", () => rotate(90));
 
 // Résultat → "Reprendre" : on jette cette page et on relance la caméra
 document.getElementById("btn-result-retake").addEventListener("click", openCamera);

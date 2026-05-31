@@ -118,8 +118,15 @@
        ========================================================= -->
   <section class="screen screen--result" id="screen-result">
     <div class="preview">
-      <img class="preview__image" id="result-image" alt="Document redressé" />
+      <img class="preview__image" id="result-image" alt="Document scanné" />
     </div>
+
+    <!-- Rotation de la page -->
+    <div class="result-rotate">
+      <button class="round-btn" id="btn-rotate-left" type="button" aria-label="Pivoter à gauche">↺</button>
+      <button class="round-btn" id="btn-rotate-right" type="button" aria-label="Pivoter à droite">↻</button>
+    </div>
+
     <!-- Choix du rendu "scan" appliqué à la page redressée -->
     <div class="filters" id="filters">
       <button class="filter-btn" type="button" data-filter="original">Original</button>
