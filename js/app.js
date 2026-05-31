@@ -2,13 +2,14 @@
 // app.js — le "chef d'orchestre" de Scanzen.
 //
 // Il coordonne les écrans et l'état de l'app, et délègue le travail
-// spécialisé aux autres fichiers (camera, scanner, filters, pages).
+// spécialisé aux autres fichiers (camera, scanner, filters, pages, pdf).
 // ===================================================================
 
 import { startCamera, stopCamera, capturePhoto } from "./camera.js";
 import { initCrop, dewarp } from "./scanner.js";
 import { applyFilter } from "./filters.js";
-import { addPage, pageCount } from "./pages.js";
+import { addPage, pageCount, getPages } from "./pages.js";
+import { exportPdf } from "./pdf.js";
 
 // --- État partagé de l'app ---
 const state = {
@@ -25,6 +26,7 @@ const cameraErrorText = document.getElementById("camera-error-text");
 const previewImage = document.getElementById("preview-image");
 const resultImage = document.getElementById("result-image");
 const filterButtons = document.querySelectorAll(".filter-btn");
+const exportBtn = document.getElementById("btn-export");
 
 // Image "source" (la page redressée) sur laquelle on applique les filtres.
 const sourceImg = new Image();
@@ -45,7 +47,7 @@ function loadInto(imgEl, dataUrl) {
   });
 }
 
-// --- Ouvrir la caméra (depuis l'accueil, "Reprendre" ou "Ajouter une page") ---
+// --- Ouvrir la caméra (accueil, "Reprendre" ou "Ajouter une page") ---
 async function openCamera() {
   showScreen("screen-camera");
   cameraError.hidden = true;
@@ -57,7 +59,7 @@ async function openCamera() {
   }
 }
 
-// --- Fermer la caméra : on revient à la liste s'il y a déjà des pages,
+// --- Fermer la caméra : retour à la liste s'il y a déjà des pages,
 //     sinon à l'accueil. ---
 function closeCamera() {
   stopCamera(video);
@@ -153,7 +155,21 @@ document.getElementById("btn-add-to-list").addEventListener("click", () => {
 // Liste → "+ Ajouter une page" : on relance la caméra
 document.getElementById("btn-add-page").addEventListener("click", openCamera);
 
-// Liste → "Exporter en PDF" : viendra à l'étape 6.
-document.getElementById("btn-export").addEventListener("click", () => {
-  alert("Export PDF : c'est l'étape 6, juste après !");
+// Liste → "Exporter en PDF" : on assemble toutes les pages en un PDF.
+exportBtn.addEventListener("click", async () => {
+  const pages = getPages();
+  if (pages.length === 0) return;
+
+  const label = exportBtn.textContent;
+  exportBtn.disabled = true;
+  exportBtn.textContent = "Création du PDF…";
+  try {
+    await exportPdf(pages);
+  } catch (e) {
+    console.error(e);
+    alert("La création du PDF a échoué. Réessaie.");
+  } finally {
+    exportBtn.textContent = label;
+    exportBtn.disabled = false;
+  }
 });
