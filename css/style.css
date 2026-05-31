@@ -390,14 +390,15 @@ body {
 }
 .filter-btn {
   flex: 1;
-  max-width: 130px;
-  padding: 10px 8px;
+  max-width: 140px;
+  padding: 11px 6px;
   border-radius: 999px;
   border: 1.5px solid rgba(255, 255, 255, 0.3);
   background: transparent;
   color: #fff;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
+  white-space: nowrap;
   cursor: pointer;
   touch-action: manipulation;
 }
