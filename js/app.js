@@ -156,3 +156,12 @@ exportBtn.addEventListener("click", async () => {
     exportBtn.disabled = false;
   }
 });
+
+// --- PWA : enregistre le service worker (installation + hors-ligne) ---
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker
+      .register("service-worker.js")
+      .catch((err) => console.warn("Service worker non enregistré :", err));
+  });
+}
