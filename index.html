@@ -78,6 +78,44 @@
     </div>
   </section>
 
+  <!-- =========================================================
+       ÉCRAN RECADRAGE
+       La photo capturée + un quadrilatère à 4 coins glissables.
+       L'overlay SVG est rempli par scanner.js.
+       ========================================================= -->
+  <section class="screen screen--crop" id="screen-crop">
+    <div class="crop__stage">
+      <div class="crop__frame" id="crop-frame">
+        <img class="crop__image" id="crop-image" alt="Document à recadrer" />
+        <svg class="crop__overlay" id="crop-overlay"></svg>
+      </div>
+    </div>
+
+    <div class="crop__actions">
+      <button class="btn-secondary btn-secondary--light" id="btn-crop-back" type="button">Reprendre</button>
+      <button class="btn-primary" id="btn-crop-confirm" type="button">Redresser</button>
+    </div>
+
+    <!-- Voile affiché le temps qu'OpenCV se charge (1re fois seulement) -->
+    <div class="crop__loading" id="crop-loading" hidden>
+      <span>Chargement du moteur de détection…</span>
+    </div>
+  </section>
+
+  <!-- =========================================================
+       ÉCRAN RÉSULTAT (provisoire)
+       Montre la page redressée. Les filtres (étape 4) et l'ajout
+       à la liste (étape 5) viendront se greffer ici.
+       ========================================================= -->
+  <section class="screen screen--result" id="screen-result">
+    <div class="preview">
+      <img class="preview__image" id="result-image" alt="Document redressé" />
+    </div>
+    <div class="preview__actions">
+      <button class="btn-primary" id="btn-result-restart" type="button">Nouveau scan</button>
+    </div>
+  </section>
+
   <!-- type="module" : permet d'utiliser import/export entre nos fichiers JS -->
   <script type="module" src="js/app.js"></script>
 </body>

@@ -2,14 +2,16 @@
 // app.js — le "chef d'orchestre" de Scanzen.
 //
 // Il coordonne les écrans et l'état de l'app, et délègue le travail
-// spécialisé aux autres fichiers (ici : camera.js).
+// spécialisé aux autres fichiers (camera.js, scanner.js).
 // ===================================================================
 
 import { startCamera, stopCamera, capturePhoto } from "./camera.js";
+import { initCrop, dewarp } from "./scanner.js";
 
 // --- État partagé de l'app (il grandira au fil des étapes) ---
 const state = {
-  capturedImage: null, // dernière photo prise (data URL)
+  capturedImage: null, // photo brute prise par la caméra
+  dewarpedImage: null, // page redressée (résultat du recadrage)
 };
 
 // --- Éléments de la page dont on a besoin ---
@@ -17,6 +19,7 @@ const video = document.getElementById("camera-video");
 const cameraError = document.getElementById("camera-error");
 const cameraErrorText = document.getElementById("camera-error-text");
 const previewImage = document.getElementById("preview-image");
+const resultImage = document.getElementById("result-image");
 
 // --- Navigation entre écrans : un seul visible à la fois ---
 const screens = document.querySelectorAll(".screen");
@@ -32,7 +35,6 @@ async function openCamera() {
   try {
     await startCamera(video);
   } catch (err) {
-    // Permission refusée, pas de caméra, ou page pas en HTTPS/localhost.
     cameraErrorText.textContent = describeCameraError(err);
     cameraError.hidden = false;
   }
@@ -62,7 +64,7 @@ function describeCameraError(err) {
 // Accueil → ouvrir la caméra
 document.getElementById("btn-scan").addEventListener("click", openCamera);
 
-// Caméra → fermer (croix en haut, ou bouton retour de l'erreur)
+// Caméra → fermer
 document.getElementById("btn-close-camera").addEventListener("click", closeCamera);
 document.getElementById("btn-camera-back").addEventListener("click", closeCamera);
 
@@ -70,14 +72,37 @@ document.getElementById("btn-camera-back").addEventListener("click", closeCamera
 document.getElementById("btn-capture").addEventListener("click", () => {
   state.capturedImage = capturePhoto(video);
   previewImage.src = state.capturedImage;
-  stopCamera(video); // on coupe la caméra pendant qu'on regarde la photo
+  stopCamera(video);
   showScreen("screen-preview");
 });
 
 // Aperçu → "Reprendre" : on relance la caméra
 document.getElementById("btn-retake").addEventListener("click", openCamera);
 
-// Aperçu → "Continuer" : mènera au recadrage (étape 3). Provisoire :
-document.getElementById("btn-use").addEventListener("click", () => {
-  alert("Photo prête ! Le recadrage à 4 coins arrive à l'étape 3.");
+// Aperçu → "Continuer" : on passe au recadrage (détection des coins)
+document.getElementById("btn-use").addEventListener("click", async () => {
+  showScreen("screen-crop");
+  await initCrop(state.capturedImage);
+});
+
+// Recadrage → "Reprendre" : revenir à la caméra
+document.getElementById("btn-crop-back").addEventListener("click", openCamera);
+
+// Recadrage → "Redresser" : on corrige la perspective et on affiche
+// le résultat à plat.
+document.getElementById("btn-crop-confirm").addEventListener("click", () => {
+  try {
+    state.dewarpedImage = dewarp();
+    resultImage.src = state.dewarpedImage;
+    showScreen("screen-result");
+  } catch (e) {
+    console.error(e);
+    alert("Le redressement a échoué. Essaie de réajuster les coins.");
+  }
+});
+
+// Résultat → "Nouveau scan" : retour à l'accueil (provisoire ; les
+// filtres et la liste des pages arrivent aux étapes 4 et 5).
+document.getElementById("btn-result-restart").addEventListener("click", () => {
+  showScreen("screen-home");
 });

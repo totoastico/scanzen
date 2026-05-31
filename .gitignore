@@ -5,3 +5,6 @@ Thumbs.db
 
 # Dossiers d'outils éventuels
 node_modules/
+
+# Outils locaux (ne pas publier)
+.claude/
