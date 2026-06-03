@@ -514,6 +514,20 @@ body {
   color: #c0392b;
 }
 
+.ocr-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 20px 8px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.ocr-toggle input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent);
+}
+
 .pages__actions {
   display: flex;
   gap: 12px;

@@ -171,11 +171,17 @@ exportBtn.addEventListener("click", async () => {
   const pages = getPages();
   if (pages.length === 0) return;
 
+  const ocr = document.getElementById("ocr-toggle").checked;
   const label = exportBtn.textContent;
   exportBtn.disabled = true;
-  exportBtn.textContent = "Création du PDF…";
+  exportBtn.textContent = ocr ? "OCR en cours…" : "Création du PDF…";
   try {
-    await exportPdf(pages);
+    await exportPdf(pages, {
+      ocr,
+      onProgress: (i, total, p) => {
+        exportBtn.textContent = `OCR ${i + 1}/${total} — ${Math.round((p || 0) * 100)}%`;
+      },
+    });
   } catch (e) {
     console.error(e);
     alert("La création du PDF a échoué. Réessaie.");

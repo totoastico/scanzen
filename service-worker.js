@@ -2,12 +2,11 @@
 // service-worker.js — rend Scanzen installable et utilisable hors-ligne.
 //
 // Stratégie "réseau d'abord, sans cache HTTP" pour nos fichiers : on
-// va toujours chercher la version FRAÎCHE sur le serveur (donc plus
-// jamais d'ancienne version coincée en cache), et on ne bascule sur
-// le cache que si tu es hors-ligne.
+// va toujours chercher la version FRAÎCHE sur le serveur, et on ne
+// bascule sur le cache que si tu es hors-ligne.
 // ===================================================================
 
-const CACHE = "scanzen-v2";
+const CACHE = "scanzen-v3";
 
 const SHELL = [
   "./",
@@ -19,6 +18,7 @@ const SHELL = [
   "./js/filters.js",
   "./js/pages.js",
   "./js/pdf.js",
+  "./js/ocr.js",
   "./manifest.webmanifest",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
@@ -44,8 +44,6 @@ self.addEventListener("fetch", (event) => {
   if (req.method !== "GET") return;
 
   const sameOrigin = new URL(req.url).origin === self.location.origin;
-  // Nos fichiers : on force le réseau frais (no-store). Le CDN (OpenCV…)
-  // garde le cache navigateur normal (rapide).
   const fetcher = sameOrigin
     ? fetch(new Request(req.url, { cache: "no-store" }))
     : fetch(req);
