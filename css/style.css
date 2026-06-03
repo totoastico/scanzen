@@ -330,13 +330,13 @@ body {
   touch-action: none;
 }
 
-/* Le rectangle de découpe */
-.crop__rect {
-  fill: none;
+/* Le quadrilatère de découpe (4 coins) */
+.crop__poly {
+  fill: rgba(37, 99, 235, 0.12);
   stroke: var(--accent);
   stroke-width: 2;
 }
-/* Zones sombres autour du rectangle (mettent en valeur la découpe) */
+/* Zone sombre autour du quadrilatère (met en valeur la découpe) */
 .crop__shade {
   fill: rgba(0, 0, 0, 0.5);
 }

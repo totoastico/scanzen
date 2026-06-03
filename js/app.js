@@ -141,7 +141,7 @@ document.getElementById("btn-crop-confirm").addEventListener("click", () => {
     showResult();
   } catch (e) {
     console.error(e);
-    alert("Le rognage a échoué. Réessaie.");
+    alert("Le redressement a échoué. Essaie de réajuster les coins.");
   }
 });
 
