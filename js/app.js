@@ -113,9 +113,9 @@ document.getElementById("btn-scan").addEventListener("click", openCamera);
 document.getElementById("btn-close-camera").addEventListener("click", closeCamera);
 document.getElementById("btn-camera-back").addEventListener("click", closeCamera);
 
-// Caméra → capturer : on fige la photo et on passe à l'aperçu
-document.getElementById("btn-capture").addEventListener("click", () => {
-  state.capturedImage = capturePhoto(video);
+// Caméra → capturer : on fige la photo (haute résolution) et on passe à l'aperçu
+document.getElementById("btn-capture").addEventListener("click", async () => {
+  state.capturedImage = await capturePhoto(video);
   previewImage.src = state.capturedImage;
   stopCamera(video);
   showScreen("screen-preview");

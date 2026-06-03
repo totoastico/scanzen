@@ -1,32 +1,30 @@
 // ===================================================================
-// camera.js — tout ce qui touche à la caméra :
-//   - démarrer le flux vidéo
-//   - l'arrêter (libérer la caméra, éteindre le voyant)
-//   - capturer l'image courante en photo
+// camera.js — caméra : démarrer le flux, l'arrêter, capturer une photo.
 //
-// On "exporte" ces fonctions pour que app.js puisse les utiliser.
+// Capture en HAUTE RÉSOLUTION quand c'est possible : on utilise
+// l'API ImageCapture (photo pleine définition de l'appareil, ex.
+// 12 Mpx) au lieu de la simple image vidéo (~2 Mpx). Repli sur la
+// trame vidéo si l'API n'existe pas (iOS) ou échoue.
 // ===================================================================
 
-// Le flux vidéo en cours. On le garde de côté pour pouvoir l'arrêter.
 let stream = null;
 
-// Démarre la caméra et branche le flux sur l'élément <video> fourni.
-// Si ça échoue (refus, pas de caméra, pas de HTTPS), l'erreur remonte
-// à app.js qui affichera un message.
+// Taille max de la photo (on borne pour rester fluide et économe en mémoire).
+const MAX_DIM = 2400;
+
 export async function startCamera(videoEl) {
   stream = await navigator.mediaDevices.getUserMedia({
     video: {
-      facingMode: { ideal: "environment" }, // caméra arrière si disponible
-      width: { ideal: 1920 },
-      height: { ideal: 1080 },
+      facingMode: { ideal: "environment" }, // caméra arrière si dispo
+      width: { ideal: 2560 },
+      height: { ideal: 1440 },
     },
-    audio: false, // on n'a pas besoin du micro
+    audio: false,
   });
   videoEl.srcObject = stream;
   await videoEl.play();
 }
 
-// Arrête la caméra et libère le matériel.
 export function stopCamera(videoEl) {
   if (stream) {
     stream.getTracks().forEach((track) => track.stop());
@@ -37,19 +35,56 @@ export function stopCamera(videoEl) {
   }
 }
 
-// Capture l'image affichée à l'instant et la renvoie en "data URL" JPEG
-// (une longue chaîne de texte qui représente l'image, utilisable comme
-// source d'une balise <img>).
-export function capturePhoto(videoEl) {
-  // On dessine l'image sur un canvas invisible, à la vraie résolution
-  // de la caméra (et non à la taille affichée à l'écran).
+function blobToDataURL(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error("Lecture de la photo impossible"));
+    reader.readAsDataURL(blob);
+  });
+}
+
+// Réduit l'image si elle dépasse MAX_DIM (sur son plus grand côté).
+function capToMaxDim(dataUrl) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const longest = Math.max(img.naturalWidth, img.naturalHeight);
+      if (longest <= MAX_DIM) {
+        resolve(dataUrl);
+        return;
+      }
+      const k = MAX_DIM / longest;
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.round(img.naturalWidth * k);
+      canvas.height = Math.round(img.naturalHeight * k);
+      canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+      resolve(canvas.toDataURL("image/jpeg", 0.95));
+    };
+    img.onerror = () => resolve(dataUrl);
+    img.src = dataUrl;
+  });
+}
+
+// Capture une photo et renvoie une data URL JPEG (haute résolution si possible).
+export async function capturePhoto(videoEl) {
+  // 1) Tentative haute résolution via ImageCapture (Android/Chrome surtout).
+  if (stream && typeof window.ImageCapture === "function") {
+    try {
+      const track = stream.getVideoTracks()[0];
+      const capture = new ImageCapture(track);
+      const blob = await capture.takePhoto();
+      const url = await blobToDataURL(blob);
+      return await capToMaxDim(url);
+    } catch (e) {
+      // on bascule sur le repli ci-dessous
+    }
+  }
+
+  // 2) Repli : la trame vidéo (iOS, ou si takePhoto échoue).
   const canvas = document.createElement("canvas");
   canvas.width = videoEl.videoWidth;
   canvas.height = videoEl.videoHeight;
-
-  const ctx = canvas.getContext("2d");
-  ctx.drawImage(videoEl, 0, 0, canvas.width, canvas.height);
-
-  // 0.92 = qualité JPEG (bon compromis netteté / poids).
-  return canvas.toDataURL("image/jpeg", 0.92);
+  canvas.getContext("2d").drawImage(videoEl, 0, 0, canvas.width, canvas.height);
+  return canvas.toDataURL("image/jpeg", 0.95);
 }
