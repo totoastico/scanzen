@@ -1,20 +1,18 @@
 // ===================================================================
-// filters.js — les 3 modes scan, avec un traitement "document" renforcé.
+// filters.js — les 3 modes scan.
 //   - original : l'image telle quelle
-//   - auto     : COULEUR, éclairage normalisé + contraste + netteté
-//   - bw       : NOIR & BLANC net (éclairage normalisé + seuillage Otsu)
+//   - auto     : COULEUR, éclairage ÉGALISÉ (ombres atténuées) en gardant
+//                la luminosité d'origine + léger contraste/netteté
+//   - bw       : NOIR & BLANC net (fond blanc + seuillage Otsu)
 //
-// Idée clé ("comme CamScanner") : on estime le FOND de la page (son
-// éclairage, sans le texte) et on le neutralise → fond blanc uniforme,
-// ombres atténuées, texte qui ressort ; puis on accentue les contours.
-//
-// Tout passe par OpenCV (déjà chargé pour la détection). Repli sur un
-// filtre CSS simple si OpenCV est indisponible.
+// Pour "auto", on n'écrase plus le fond vers le blanc pur (ça délavait) :
+// on normalise vers la luminosité MOYENNE de la page → on enlève les
+// ombres sans sur-éclairer. Repli CSS si OpenCV indisponible.
 // ===================================================================
 
 const FILTER_CSS = {
   original: "none",
-  auto: "contrast(1.3) brightness(1.05) saturate(1.1)",
+  auto: "contrast(1.12) brightness(1.02)",
   bw: "grayscale(1) contrast(1.7) brightness(1.12)",
 };
 
@@ -64,18 +62,19 @@ function estimateBackground(gray) {
   return bg;
 }
 
-// Accentuation (masque flou inversé) → renvoie une NOUVELLE Mat nette.
-function unsharp(mat) {
+// Accentuation douce (masque flou inversé) → renvoie une NOUVELLE Mat.
+function unsharp(mat, amount) {
   const cv = window.cv;
   const blur = new cv.Mat();
-  cv.GaussianBlur(mat, blur, new cv.Size(0, 0), 1.5);
+  cv.GaussianBlur(mat, blur, new cv.Size(0, 0), 1.2);
   const out = new cv.Mat();
-  cv.addWeighted(mat, 1.5, blur, -0.5, 0, out);
+  cv.addWeighted(mat, 1 + amount, blur, -amount, 0, out);
   blur.delete();
   return out;
 }
 
-// Mode "Auto" : couleur, éclairage normalisé + contraste + netteté.
+// Mode "Auto" : couleur, éclairage égalisé (sans sur-éclairer) + léger
+// contraste + accentuation douce.
 function cvAuto(source) {
   const cv = window.cv;
   const src = cv.imread(drawCanvas(source));
@@ -85,13 +84,16 @@ function cvAuto(source) {
   cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
 
   const bg = estimateBackground(gray);
+  const meanBg = cv.mean(bg)[0] || 200; // luminosité moyenne du fond
   const bg3 = new cv.Mat();
   cv.cvtColor(bg, bg3, cv.COLOR_GRAY2RGB);
 
+  // Égalise l'éclairage vers la MOYENNE (et non vers 255) → ombres
+  // atténuées, mais on garde la luminosité naturelle de la page.
   const norm = new cv.Mat();
-  cv.divide(rgb, bg3, norm, 255); // fond → blanc, ombres neutralisées
-  cv.convertScaleAbs(norm, norm, 1.3, -20); // contraste + texte plus foncé
-  const sharp = unsharp(norm);
+  cv.divide(rgb, bg3, norm, meanBg);
+  cv.convertScaleAbs(norm, norm, 1.1, -5); // contraste léger
+  const sharp = unsharp(norm, 0.4); // accentuation douce
 
   const canvas = document.createElement("canvas");
   cv.imshow(canvas, sharp);
@@ -110,7 +112,7 @@ function cvBW(source) {
   const bg = estimateBackground(gray);
   const norm = new cv.Mat();
   cv.divide(gray, bg, norm, 255);
-  const sharp = unsharp(norm);
+  const sharp = unsharp(norm, 0.5);
 
   const dst = new cv.Mat();
   cv.threshold(sharp, dst, 0, 255, cv.THRESH_BINARY | cv.THRESH_OTSU);
