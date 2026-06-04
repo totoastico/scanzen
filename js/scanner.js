@@ -109,25 +109,82 @@ function validCorners(c, src) {
   return Math.abs(area) / 2 > 0.15 * src.width * src.height;
 }
 
-function detectCorners(src) {
+// Ordonne 4 points quelconques en TL, TR, BR, BL.
+function orderCorners(pts) {
+  const bySum = [...pts].sort((a, b) => a.x + a.y - (b.x + b.y));
+  const byDiff = [...pts].sort((a, b) => a.y - a.x - (b.y - b.x));
+  return {
+    topLeftCorner: bySum[0], // plus petite somme x+y
+    bottomRightCorner: bySum[3], // plus grande somme
+    topRightCorner: byDiff[0], // plus petite différence y-x
+    bottomLeftCorner: byDiff[3], // plus grande différence
+  };
+}
+
+// Détecte le plus grand QUADRILATÈRE CONVEXE (= la feuille) parmi les
+// contours. Bien plus fiable que "le plus grand contour" : on ignore le
+// fond, les petites formes, et on n'accepte que des quadrilatères.
+function detectQuad(src) {
+  const cv = window.cv;
+  let m, small, gray, edges, kernel, contours, hierarchy;
   try {
-    const mat = window.cv.imread(src);
-    const contour = scanner.findPaperContour(mat);
-    let c = null;
-    if (contour) {
-      try {
-        c = scanner.getCornerPoints(contour);
-      } catch (e) {
-        c = null;
+    m = cv.imread(src);
+    // On travaille sur une version réduite (rapide + moins de bruit).
+    const maxDim = 900;
+    const scale = Math.min(1, maxDim / Math.max(m.cols, m.rows));
+    small = new cv.Mat();
+    cv.resize(m, small, new cv.Size(Math.max(1, Math.round(m.cols * scale)), Math.max(1, Math.round(m.rows * scale))), 0, 0, cv.INTER_AREA);
+    gray = new cv.Mat();
+    cv.cvtColor(small, gray, cv.COLOR_RGBA2GRAY);
+    cv.GaussianBlur(gray, gray, new cv.Size(5, 5), 0);
+    edges = new cv.Mat();
+    cv.Canny(gray, edges, 50, 150); // contours
+    kernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(5, 5));
+    cv.dilate(edges, edges, kernel); // relie les bords en pointillés
+    contours = new cv.MatVector();
+    hierarchy = new cv.Mat();
+    cv.findContours(edges, contours, hierarchy, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
+
+    const imgArea = small.rows * small.cols;
+    let bestPts = null;
+    let bestArea = 0.2 * imgArea; // la feuille doit faire au moins 20 % de l'image
+    for (let i = 0; i < contours.size(); i++) {
+      const cnt = contours.get(i);
+      const peri = cv.arcLength(cnt, true);
+      const approx = new cv.Mat();
+      cv.approxPolyDP(cnt, approx, 0.02 * peri, true); // simplifie en polygone
+      if (approx.rows === 4 && cv.isContourConvex(approx)) {
+        const area = cv.contourArea(approx);
+        if (area > bestArea) {
+          bestArea = area;
+          bestPts = [];
+          for (let j = 0; j < 4; j++) {
+            bestPts.push({
+              x: approx.data32S[j * 2] / scale, // re-mise à l'échelle réelle
+              y: approx.data32S[j * 2 + 1] / scale,
+            });
+          }
+        }
       }
-      if (contour.delete) contour.delete();
+      approx.delete();
+      cnt.delete();
     }
-    mat.delete();
-    return c && validCorners(c, src) ? c : defaultCorners(src);
+    return bestPts ? orderCorners(bestPts) : null;
   } catch (e) {
-    console.warn("Détection auto impossible, coins par défaut.", e);
-    return defaultCorners(src);
+    console.warn("Détection des coins échouée.", e);
+    return null;
+  } finally {
+    [m, small, gray, edges, kernel, contours, hierarchy].forEach((x) => {
+      try {
+        if (x) x.delete();
+      } catch (_) {}
+    });
   }
+}
+
+function detectCorners(src) {
+  const quad = detectQuad(src);
+  return quad && validCorners(quad, src) ? quad : defaultCorners(src);
 }
 
 // --- Affichage du quadrilatère et des poignées ---------------------
