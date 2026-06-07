@@ -136,12 +136,40 @@ function readFileAsDataURL(file) {
   });
 }
 
-// Charge l'image suivante de la file dans le recadrage.
-function startNextImport() {
+// Convertit une image (data URL) en canvas pleine résolution, telle quelle.
+function imageToCanvas(dataUrl) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+      canvas.getContext("2d", { willReadFrequently: true }).drawImage(img, 0, 0);
+      resolve(canvas);
+    };
+    img.onerror = () => reject(new Error("Image illisible"));
+    img.src = dataUrl;
+  });
+}
+
+// Charge le fichier suivant de la file. Un fichier téléversé est DÉJÀ
+// scanné → on saute le recadrage et on le prend tel quel (image entière),
+// directement à l'écran résultat (filtre / rotation restent disponibles).
+async function startNextImport() {
   if (!importQueue.length) return;
-  state.capturedImage = importQueue.shift();
-  showScreen("screen-crop");
-  initCrop(state.capturedImage);
+  const img = importQueue.shift();
+  state.capturedImage = img;
+  try {
+    state.croppedCanvas = await imageToCanvas(img);
+  } catch (e) {
+    console.error(e);
+    alert("Ce fichier n'a pas pu être ouvert.");
+    if (importQueue.length) startNextImport();
+    return;
+  }
+  state.rotation = 0;
+  state.activeFilter = "original"; // déjà scanné → on n'altère rien par défaut
+  showResult();
 }
 
 // Accueil → "Téléverser" : importe une ou plusieurs IMAGES et/ou PDF.
@@ -184,6 +212,7 @@ document.getElementById("btn-camera-back").addEventListener("click", closeCamera
 // Caméra → capturer (l'image affichée) puis aperçu
 document.getElementById("btn-capture").addEventListener("click", () => {
   state.capturedImage = capturePhoto(video);
+  state.activeFilter = "auto"; // photo → filtre "Auto" par défaut (≠ téléversement)
   previewImage.src = state.capturedImage;
   stopCamera(video);
   showScreen("screen-preview");
