@@ -411,6 +411,24 @@ body {
   display: none;
 }
 
+/* --- Voile "occupé" plein écran (ex. lecture d'un PDF) --- */
+.busy {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 32px;
+  background: rgba(255, 255, 255, 0.94);
+  font-size: 17px;
+  font-weight: 600;
+}
+.busy[hidden] {
+  display: none;
+}
+
 /* --- Flèches de rotation, posées sur les bords de l'image --- */
 .edge-btn {
   position: absolute;

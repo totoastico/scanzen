@@ -12,6 +12,7 @@ import { addPage, pageCount, getPages, clearPages } from "./pages.js";
 import { buildPdf, sharePdf } from "./pdf.js";
 import { ocrPage } from "./ocr.js";
 import { extractFields, buildFilename, buildRow } from "./contract.js";
+import { pdfToImages, isPdf } from "./pdfimport.js";
 
 // --- État partagé de l'app ---
 const state = {
@@ -39,6 +40,17 @@ const screens = document.querySelectorAll(".screen");
 function showScreen(id) {
   screens.forEach((screen) => screen.classList.remove("screen--active"));
   document.getElementById(id).classList.add("screen--active");
+}
+
+// --- Petit voile "occupé" (lecture d'un PDF, etc.) ---
+const busy = document.getElementById("busy");
+const busyText = document.getElementById("busy-text");
+function showBusy(msg) {
+  busyText.textContent = msg;
+  busy.hidden = false;
+}
+function hideBusy() {
+  busy.hidden = true;
 }
 
 // Renvoie un canvas pivoté de `deg` degrés (90/180/270).
@@ -132,16 +144,35 @@ function startNextImport() {
   initCrop(state.capturedImage);
 }
 
-// Accueil → "Téléverser" : importe UNE OU PLUSIEURS images (même parcours).
+// Accueil → "Téléverser" : importe une ou plusieurs IMAGES et/ou PDF.
+// Un PDF est converti en images (1 par page) ; tout passe ensuite par le
+// même parcours (recadrage → filtre → liste). Word/.docx non géré.
 document.getElementById("file-input").addEventListener("change", async (e) => {
   const files = Array.from(e.target.files || []);
   e.target.value = ""; // permet de re-sélectionner les mêmes fichiers
   if (!files.length) return;
   try {
-    importQueue = await Promise.all(files.map(readFileAsDataURL));
+    const images = [];
+    for (const file of files) {
+      if (isPdf(file)) {
+        showBusy("Lecture du PDF…");
+        const pages = await pdfToImages(file, (i, total) =>
+          showBusy(`Lecture du PDF… page ${i}/${total}`)
+        );
+        images.push(...pages);
+      } else if (file.type.startsWith("image/")) {
+        images.push(await readFileAsDataURL(file));
+      } else {
+        alert(`« ${file.name} » n'est ni une image ni un PDF.\nPour un fichier Word, enregistre-le d'abord en PDF.`);
+      }
+    }
+    hideBusy();
+    if (!images.length) return;
+    importQueue = images;
   } catch (err) {
+    hideBusy();
     console.error(err);
-    alert("Impossible de lire une des images.");
+    alert("Impossible de lire ce fichier. " + (err.message || ""));
     return;
   }
   startNextImport();

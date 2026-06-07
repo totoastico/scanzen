@@ -35,10 +35,10 @@
         Scanzenons
       </button>
 
-      <!-- Option discrète : importer une image existante -->
+      <!-- Option discrète : importer des images ou des PDF existants -->
       <label class="upload-link">
-        <span class="upload-link__icon">⤓</span> Téléverser
-        <input type="file" id="file-input" accept="image/*" multiple hidden />
+        <span class="upload-link__icon">⤓</span> Téléverser (image ou PDF)
+        <input type="file" id="file-input" accept="image/*,application/pdf" multiple hidden />
       </label>
 
       <span class="brand">scanzen</span>
@@ -213,6 +213,11 @@
       <button class="btn-primary" id="btn-cachet-save" type="button">Enregistrer</button>
     </div>
   </section>
+
+  <!-- Voile "occupé" plein écran (ex. lecture d'un PDF en cours) -->
+  <div class="busy" id="busy" hidden>
+    <span id="busy-text">…</span>
+  </div>
 
   <!-- type="module" : permet d'utiliser import/export entre nos fichiers JS -->
   <script type="module" src="js/app.js"></script>

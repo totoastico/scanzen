@@ -6,7 +6,7 @@
 // bascule sur le cache que si tu es hors-ligne.
 // ===================================================================
 
-const CACHE = "scanzen-v3";
+const CACHE = "scanzen-v4";
 
 const SHELL = [
   "./",
@@ -19,6 +19,8 @@ const SHELL = [
   "./js/pages.js",
   "./js/pdf.js",
   "./js/ocr.js",
+  "./js/contract.js",
+  "./js/pdfimport.js",
   "./manifest.webmanifest",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
