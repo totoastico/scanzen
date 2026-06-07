@@ -98,9 +98,10 @@ export async function sharePdf(blob) {
   if (navigator.canShare && navigator.canShare({ files: [file] })) {
     try {
       await navigator.share({ files: [file], title: "Scanzen" });
-      return;
+      return true; // partagé avec succès
     } catch (e) {
-      if (e && e.name === "AbortError") return; // partage annulé
+      if (e && e.name === "AbortError") return false; // l'utilisateur a annulé
+      // autre erreur (ex. autorisation expirée) → on tente le téléchargement
     }
   }
 
@@ -112,4 +113,5 @@ export async function sharePdf(blob) {
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+  return true; // téléchargé
 }

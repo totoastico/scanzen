@@ -32,6 +32,12 @@ export function pageCount() {
   return pages.length;
 }
 
+// Vide toute la liste (après un export réussi : le scan est terminé).
+export function clearPages() {
+  pages.length = 0;
+  render();
+}
+
 // --- Interne ---
 
 function removePage(index) {

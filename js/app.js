@@ -8,7 +8,7 @@
 import { startCamera, stopCamera, capturePhoto } from "./camera.js";
 import { initCrop, cropToCanvas } from "./scanner.js";
 import { applyFilter } from "./filters.js";
-import { addPage, pageCount, getPages } from "./pages.js";
+import { addPage, pageCount, getPages, clearPages } from "./pages.js";
 import { buildPdf, sharePdf } from "./pdf.js";
 
 // --- État partagé de l'app ---
@@ -166,15 +166,22 @@ document.getElementById("btn-add-to-list").addEventListener("click", () => {
 // Liste → "+ Ajouter une page"
 document.getElementById("btn-add-page").addEventListener("click", openCamera);
 
+// Après un export réussi : on vide la liste (le scan est terminé) et on
+// revient à l'accueil.
+function finishExport() {
+  pendingPdf = null;
+  exportBtn.textContent = EXPORT_LABEL;
+  clearPages();
+  showScreen("screen-home");
+}
+
 // Liste → "Exporter en PDF"
 exportBtn.addEventListener("click", async () => {
   // 2e temps : un PDF est prêt → on le partage (appui = geste utilisateur frais).
   if (pendingPdf) {
-    const blob = pendingPdf;
-    pendingPdf = null;
-    exportBtn.textContent = EXPORT_LABEL;
-    await sharePdf(blob);
-    return;
+    const delivered = await sharePdf(pendingPdf);
+    if (delivered) finishExport(); // partagé → fin du scan
+    return; // annulé → on garde le PDF pour réessayer
   }
 
   const pages = getPages();
@@ -197,7 +204,8 @@ exportBtn.addEventListener("click", async () => {
       exportBtn.textContent = "📄 Partager le PDF";
     } else {
       exportBtn.textContent = EXPORT_LABEL;
-      await sharePdf(blob);
+      const delivered = await sharePdf(blob);
+      if (delivered) finishExport();
     }
   } catch (e) {
     console.error(e);
