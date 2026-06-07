@@ -640,3 +640,20 @@ body {
   color: var(--ink);
   font-weight: 700;
 }
+
+/* Écran fiche cachet : colonne étroite et centrée
+   (≈ un quart d'un grand écran PC, plein écran sur smartphone). */
+#screen-contract .pages__top,
+#screen-contract .form,
+#screen-contract .pages__actions {
+  width: 100%;
+  max-width: 440px;
+  margin-left: auto;
+  margin-right: auto;
+}
+#screen-contract .form {
+  gap: 10px;
+}
+#screen-contract .field input {
+  padding: 10px 12px;
+}
