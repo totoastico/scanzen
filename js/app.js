@@ -112,18 +112,39 @@ function rotate(delta) {
 
 document.getElementById("btn-scan").addEventListener("click", openCamera);
 
-// Accueil → "Téléverser" : importe une image existante (même parcours).
-document.getElementById("file-input").addEventListener("change", (e) => {
-  const file = e.target.files && e.target.files[0];
-  if (!file) return;
-  const reader = new FileReader();
-  reader.onload = () => {
-    state.capturedImage = reader.result; // data URL
-    previewImage.src = state.capturedImage;
-    showScreen("screen-preview");
-  };
-  reader.readAsDataURL(file);
-  e.target.value = ""; // permet de re-sélectionner le même fichier
+// --- Téléversement d'images existantes (une ou plusieurs) ---
+let importQueue = [];
+
+function readFileAsDataURL(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error("Lecture impossible"));
+    reader.readAsDataURL(file);
+  });
+}
+
+// Charge l'image suivante de la file dans le recadrage.
+function startNextImport() {
+  if (!importQueue.length) return;
+  state.capturedImage = importQueue.shift();
+  showScreen("screen-crop");
+  initCrop(state.capturedImage);
+}
+
+// Accueil → "Téléverser" : importe UNE OU PLUSIEURS images (même parcours).
+document.getElementById("file-input").addEventListener("change", async (e) => {
+  const files = Array.from(e.target.files || []);
+  e.target.value = ""; // permet de re-sélectionner les mêmes fichiers
+  if (!files.length) return;
+  try {
+    importQueue = await Promise.all(files.map(readFileAsDataURL));
+  } catch (err) {
+    console.error(err);
+    alert("Impossible de lire une des images.");
+    return;
+  }
+  startNextImport();
 });
 
 document.getElementById("btn-close-camera").addEventListener("click", closeCamera);
@@ -176,7 +197,8 @@ document.getElementById("btn-add-to-list").addEventListener("click", () => {
   addPage(state.filteredImage);
   pendingPdf = null; // le contenu a changé → l'éventuel PDF préparé n'est plus valable
   exportBtn.textContent = EXPORT_LABEL;
-  showScreen("screen-pages");
+  if (importQueue.length) startNextImport(); // continuer le lot téléversé
+  else showScreen("screen-pages");
 });
 
 // Liste → "+ Ajouter une page"
