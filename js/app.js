@@ -360,26 +360,73 @@ document.getElementById("btn-prefill").addEventListener("click", async () => {
 
 document.getElementById("btn-cachet-back").addEventListener("click", () => showScreen("screen-pages"));
 
-// Formulaire → "Enregistrer" (provisoire avant Google) : copie la ligne
-// pour la feuille + télécharge le PDF nommé.
+function blobToDataURL(blob) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result);
+    r.onerror = () => reject(new Error("Lecture du PDF impossible"));
+    r.readAsDataURL(blob);
+  });
+}
+
+// URL du connecteur Apps Script (stockée sur l'appareil, pas dans le code public).
+function getConnectorUrl(forcePrompt) {
+  let url = localStorage.getItem("scanzen_gas_url") || "";
+  if (forcePrompt || !url) {
+    const v = prompt("Colle l'URL du connecteur Google (elle finit par /exec) :", url);
+    if (v && v.trim()) {
+      url = v.trim();
+      localStorage.setItem("scanzen_gas_url", url);
+    }
+  }
+  return url;
+}
+
+// ⚙️ Régler / changer le connecteur
+document.getElementById("btn-config-gas").addEventListener("click", () => {
+  if (getConnectorUrl(true)) alert("Connecteur enregistré ✅");
+});
+
+// Fiche → "Enregistrer" : envoie le PDF + la fiche au connecteur Google
+// (qui range le PDF dans Drive et ajoute la ligne dans la feuille).
 document.getElementById("btn-cachet-save").addEventListener("click", async () => {
+  const url = getConnectorUrl(false);
+  if (!url) return; // aucun connecteur configuré
+
   const f = currentFields();
   const filename = buildFilename(f) + ".pdf";
-  try {
-    await navigator.clipboard.writeText(buildRow(f, filename));
-  } catch (e) {
-    /* clipboard indisponible : on continue */
-  }
+  const btn = document.getElementById("btn-cachet-save");
+  const label = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "Envoi…";
   try {
     const blob = await buildPdf(getPages(), { ocr: false });
-    downloadBlob(blob, filename);
+    const pdfBase64 = (await blobToDataURL(blob)).split(",")[1];
+    const payload = {
+      filename,
+      annee: f.date ? f.date.slice(0, 4) : String(new Date().getFullYear()),
+      date: f.date, projet: f.projet, studio: f.studio, employe: f.employe,
+      da: f.da, role: f.role, lignes: f.lignes, brut: f.brut, net: f.net,
+      pdfBase64,
+    };
+    await fetch(url, {
+      method: "POST",
+      mode: "no-cors",
+      headers: { "Content-Type": "text/plain;charset=utf-8" },
+      body: JSON.stringify(payload),
+    });
+    alert("Envoyé ✅\nPDF rangé dans Drive + ligne ajoutée à ta feuille.\n(Vérifie ta feuille ; si rien n'apparaît, re-règle l'URL via ⚙️ Connecteur Google.)");
+    clearPages();
+    pendingPdf = null;
+    exportBtn.textContent = EXPORT_LABEL;
+    showScreen("screen-home");
   } catch (e) {
     console.error(e);
+    alert("Échec de l'envoi. Vérifie l'URL du connecteur (⚙️ Connecteur Google).");
+  } finally {
+    btn.textContent = label;
+    btn.disabled = false;
   }
-  alert(
-    'Fiche copiée (colle-la dans ta feuille) et PDF "' + filename + '" téléchargé.\n\n' +
-      "Le rangement automatique dans Drive + la feuille Google arrivent à l'étape suivante."
-  );
 });
 
 // --- PWA : enregistre le service worker (installation + hors-ligne) ---
