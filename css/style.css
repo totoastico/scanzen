@@ -66,6 +66,7 @@ body {
 
 /* --- Écran d'accueil --- */
 .home {
+  position: relative;
   flex: 1;                  /* occupe tout l'espace restant */
   display: flex;
   flex-direction: column;
@@ -75,6 +76,16 @@ body {
   padding: 24px;
   padding-bottom: calc(24px + env(safe-area-inset-bottom));
   gap: 12px;
+}
+/* Petit nom de marque dans le coin bas */
+.brand {
+  position: absolute;
+  left: 24px;
+  bottom: calc(20px + env(safe-area-inset-bottom));
+  font-weight: 800;
+  font-size: 18px;
+  letter-spacing: -0.02em;
+  color: var(--ink);
 }
 .home__title {
   font-size: clamp(32px, 9vw, 44px);

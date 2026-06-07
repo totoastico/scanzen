@@ -9,7 +9,7 @@ import { startCamera, stopCamera, capturePhoto } from "./camera.js";
 import { initCrop, cropToCanvas } from "./scanner.js";
 import { applyFilter } from "./filters.js";
 import { addPage, pageCount, getPages } from "./pages.js";
-import { exportPdf } from "./pdf.js";
+import { buildPdf, sharePdf } from "./pdf.js";
 
 // --- État partagé de l'app ---
 const state = {
@@ -19,6 +19,9 @@ const state = {
   activeFilter: "auto", // mode de filtre courant
   rotation: 0, // rotation appliquée au résultat (0, 90, 180, 270)
 };
+
+let pendingPdf = null; // PDF préparé, en attente d'un appui pour le partager
+const EXPORT_LABEL = "Exporter en PDF";
 
 // --- Éléments de la page dont on a besoin ---
 const video = document.getElementById("camera-video");
@@ -84,8 +87,6 @@ function showResult() {
   showScreen("screen-result");
 }
 
-// Applique la rotation courante puis le mode (original/auto/bw), met à
-// jour l'image affichée et surligne le bouton de filtre actif.
 function setFilter(mode) {
   state.activeFilter = mode;
   const source = state.rotation
@@ -98,7 +99,6 @@ function setFilter(mode) {
   );
 }
 
-// Tourne le résultat de ±90° et rafraîchit l'affichage.
 function rotate(delta) {
   state.rotation = (state.rotation + delta + 360) % 360;
   setFilter(state.activeFilter);
@@ -113,9 +113,9 @@ document.getElementById("btn-scan").addEventListener("click", openCamera);
 document.getElementById("btn-close-camera").addEventListener("click", closeCamera);
 document.getElementById("btn-camera-back").addEventListener("click", closeCamera);
 
-// Caméra → capturer : on fige la photo (haute résolution) et on passe à l'aperçu
-document.getElementById("btn-capture").addEventListener("click", async () => {
-  state.capturedImage = await capturePhoto(video);
+// Caméra → capturer (l'image affichée) puis aperçu
+document.getElementById("btn-capture").addEventListener("click", () => {
+  state.capturedImage = capturePhoto(video);
   previewImage.src = state.capturedImage;
   stopCamera(video);
   showScreen("screen-preview");
@@ -124,7 +124,7 @@ document.getElementById("btn-capture").addEventListener("click", async () => {
 // Aperçu → "Reprendre"
 document.getElementById("btn-retake").addEventListener("click", openCamera);
 
-// Aperçu → "Continuer" : on passe au recadrage
+// Aperçu → "Continuer" : recadrage
 document.getElementById("btn-use").addEventListener("click", async () => {
   showScreen("screen-crop");
   await initCrop(state.capturedImage);
@@ -133,11 +133,11 @@ document.getElementById("btn-use").addEventListener("click", async () => {
 // Recadrage → "Reprendre"
 document.getElementById("btn-crop-back").addEventListener("click", openCamera);
 
-// Recadrage → "Rogner" : on découpe le rectangle puis on affiche le résultat
+// Recadrage → "Redresser"
 document.getElementById("btn-crop-confirm").addEventListener("click", () => {
   try {
     state.croppedCanvas = cropToCanvas();
-    state.rotation = 0; // nouveau scan = pas de rotation au départ
+    state.rotation = 0;
     showResult();
   } catch (e) {
     console.error(e);
@@ -145,21 +145,21 @@ document.getElementById("btn-crop-confirm").addEventListener("click", () => {
   }
 });
 
-// Boutons de filtre (Original / Auto / Noir & blanc)
+// Filtres + rotation
 filterButtons.forEach((b) =>
   b.addEventListener("click", () => setFilter(b.dataset.filter))
 );
-
-// Boutons de rotation (gauche / droite)
 document.getElementById("btn-rotate-left").addEventListener("click", () => rotate(-90));
 document.getElementById("btn-rotate-right").addEventListener("click", () => rotate(90));
 
-// Résultat → "Reprendre" : on jette cette page et on relance la caméra
+// Résultat → "Reprendre"
 document.getElementById("btn-result-retake").addEventListener("click", openCamera);
 
-// Résultat → "Ajouter" : on ajoute la page à la liste
+// Résultat → "Ajouter" : ajoute la page à la liste
 document.getElementById("btn-add-to-list").addEventListener("click", () => {
   addPage(state.filteredImage);
+  pendingPdf = null; // le contenu a changé → l'éventuel PDF préparé n'est plus valable
+  exportBtn.textContent = EXPORT_LABEL;
   showScreen("screen-pages");
 });
 
@@ -168,25 +168,42 @@ document.getElementById("btn-add-page").addEventListener("click", openCamera);
 
 // Liste → "Exporter en PDF"
 exportBtn.addEventListener("click", async () => {
+  // 2e temps : un PDF est prêt → on le partage (appui = geste utilisateur frais).
+  if (pendingPdf) {
+    const blob = pendingPdf;
+    pendingPdf = null;
+    exportBtn.textContent = EXPORT_LABEL;
+    await sharePdf(blob);
+    return;
+  }
+
   const pages = getPages();
   if (pages.length === 0) return;
-
   const ocr = document.getElementById("ocr-toggle").checked;
-  const label = exportBtn.textContent;
+
   exportBtn.disabled = true;
   exportBtn.textContent = ocr ? "OCR en cours…" : "Création du PDF…";
   try {
-    await exportPdf(pages, {
+    const blob = await buildPdf(pages, {
       ocr,
       onProgress: (i, total, p) => {
         exportBtn.textContent = `OCR ${i + 1}/${total} — ${Math.round((p || 0) * 100)}%`;
       },
     });
+    if (ocr) {
+      // L'OCR peut durer longtemps → l'autorisation de partage a expiré.
+      // On garde le PDF et on attend un nouvel appui pour le partager.
+      pendingPdf = blob;
+      exportBtn.textContent = "📄 Partager le PDF";
+    } else {
+      exportBtn.textContent = EXPORT_LABEL;
+      await sharePdf(blob);
+    }
   } catch (e) {
     console.error(e);
     alert("La création du PDF a échoué. Réessaie.");
+    exportBtn.textContent = EXPORT_LABEL;
   } finally {
-    exportBtn.textContent = label;
     exportBtn.disabled = false;
   }
 });

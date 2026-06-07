@@ -1,10 +1,14 @@
 // ===================================================================
-// pdf.js — assemble les pages en UN SEUL PDF (jsPDF), puis propose le
-// partage natif (téléphone) ou le téléchargement (ordi).
+// pdf.js — assemble les pages en UN SEUL PDF (jsPDF).
 //
-// Option OCR : pour chaque page, on superpose une couche de texte
-// INVISIBLE (issue de l'OCR) → le PDF devient sélectionnable / cherchable
-// / convertible, tout en gardant l'image visible.
+// Deux étapes séparées :
+//   - buildPdf()  : fabrique le PDF (long si OCR) → renvoie un Blob.
+//   - sharePdf()  : ouvre le partage natif / téléchargement.
+// On les sépare car le partage exige un "geste utilisateur récent" :
+// après un OCR long, on attend un nouvel appui pour partager de façon
+// fiable.
+//
+// Option OCR : couche de texte INVISIBLE par page → PDF sélectionnable.
 // ===================================================================
 
 import { ocrPage, terminateOcr } from "./ocr.js";
@@ -38,8 +42,6 @@ function getDimensions(dataUrl) {
   });
 }
 
-// Construit le PDF (une page par image). Si opts.ocr, ajoute la couche
-// de texte invisible. Renvoie un Blob PDF.
 async function buildPdfBlob(pages, opts) {
   await ensureJsPdf();
   const { jsPDF } = window.jspdf;
@@ -64,15 +66,14 @@ async function buildPdfBlob(pages, opts) {
       doc.setTextColor(0, 0, 0);
       for (const ln of lines) {
         const h = Math.max(1, ln.bbox.y1 - ln.bbox.y0);
-        doc.setFontSize(h * 0.72); // ~ hauteur de ligne (le texte est invisible)
+        doc.setFontSize(h * 0.72);
         try {
-          // Texte invisible (renderingMode), positionné sur la ligne.
           doc.text(ln.text, ln.bbox.x0, ln.bbox.y1, {
             renderingMode: "invisible",
             baseline: "alphabetic",
           });
         } catch (e) {
-          /* certains caractères peuvent ne pas s'encoder : on ignore */
+          /* caractère non encodable : on ignore */
         }
       }
     }
@@ -80,31 +81,35 @@ async function buildPdfBlob(pages, opts) {
   return doc.output("blob");
 }
 
-// Propose le PDF : partage natif si possible (mobile), sinon téléchargement.
-export async function exportPdf(pages, opts = {}) {
+// Fabrique le PDF (Blob). Long si OCR.
+export async function buildPdf(pages, opts = {}) {
   try {
-    const blob = await buildPdfBlob(pages, opts);
-    const file = new File([blob], "scanzen.pdf", { type: "application/pdf" });
-
-    if (navigator.canShare && navigator.canShare({ files: [file] })) {
-      try {
-        await navigator.share({ files: [file], title: "Scanzen" });
-        return;
-      } catch (e) {
-        if (e && e.name === "AbortError") return;
-      }
-    }
-
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "scanzen.pdf";
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    return await buildPdfBlob(pages, opts);
   } finally {
-    // On libère le moteur OCR (mémoire) après l'export.
     if (opts.ocr) terminateOcr().catch(() => {});
   }
+}
+
+// Ouvre le partage natif (mobile) ou télécharge (ordi). À appeler depuis
+// un appui utilisateur (sinon le partage est bloqué par le navigateur).
+export async function sharePdf(blob) {
+  const file = new File([blob], "scanzen.pdf", { type: "application/pdf" });
+
+  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+    try {
+      await navigator.share({ files: [file], title: "Scanzen" });
+      return;
+    } catch (e) {
+      if (e && e.name === "AbortError") return; // partage annulé
+    }
+  }
+
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "scanzen.pdf";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
