@@ -112,6 +112,20 @@ function rotate(delta) {
 
 document.getElementById("btn-scan").addEventListener("click", openCamera);
 
+// Accueil → "Téléverser" : importe une image existante (même parcours).
+document.getElementById("file-input").addEventListener("change", (e) => {
+  const file = e.target.files && e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    state.capturedImage = reader.result; // data URL
+    previewImage.src = state.capturedImage;
+    showScreen("screen-preview");
+  };
+  reader.readAsDataURL(file);
+  e.target.value = ""; // permet de re-sélectionner le même fichier
+});
+
 document.getElementById("btn-close-camera").addEventListener("click", closeCamera);
 document.getElementById("btn-camera-back").addEventListener("click", closeCamera);
 
