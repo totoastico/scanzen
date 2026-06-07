@@ -290,7 +290,19 @@ function refreshFilename() {
 }
 [F.date, F.studio, F.da].forEach((el) => el.addEventListener("input", refreshFilename));
 
+// Montant net = estimation depuis le brut (≈ 78 %), sauf si saisi à la main.
+const NET_PCT = 0.78; // à ajuster selon tes bulletins de paie (net ÷ brut)
+let netManual = false;
+function computeNet() {
+  if (netManual) return;
+  const brut = parseFloat((F.brut.value || "").replace(",", "."));
+  F.net.value = isFinite(brut) ? Math.round(brut * NET_PCT * 100) / 100 : "";
+}
+F.brut.addEventListener("input", computeNet);
+F.net.addEventListener("input", () => { netManual = true; });
+
 function fillForm(f) {
+  netManual = false;
   F.projet.value = f.projet || "";
   F.studio.value = f.studio || "";
   F.employe.value = f.employe || "";
@@ -299,6 +311,7 @@ function fillForm(f) {
   F.lignes.value = f.lignes || "";
   F.brut.value = f.brut || "";
   F.net.value = f.net || "";
+  if (!F.net.value) computeNet(); // estime le net si absent
   F.role.value = f.role || "ND";
   refreshFilename();
 }
