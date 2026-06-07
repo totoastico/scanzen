@@ -142,6 +142,10 @@
 
     <div class="pages__list" id="pages-list"></div>
 
+    <div class="pages__cachet">
+      <button class="btn-secondary" id="btn-cachet" type="button">🎙️ Fiche cachet (contrat)</button>
+    </div>
+
     <label class="ocr-toggle">
       <input type="checkbox" id="ocr-toggle" checked />
       <span>Texte sélectionnable (OCR, français — plus lent)</span>
@@ -150,6 +154,55 @@
     <div class="pages__actions">
       <button class="btn-secondary" id="btn-add-page" type="button">+ Ajouter une page</button>
       <button class="btn-primary" id="btn-export" type="button">Exporter en PDF</button>
+    </div>
+  </section>
+
+  <!-- =========================================================
+       ÉCRAN FICHE CACHET (contrat voix off)
+       9 champs à vérifier/compléter + nom de fichier généré.
+       ========================================================= -->
+  <section class="screen screen--contract" id="screen-contract">
+    <header class="pages__top">
+      <span class="wordmark">Fiche cachet</span>
+    </header>
+
+    <div class="form">
+      <button class="btn-secondary" id="btn-prefill" type="button">✨ Pré-remplir depuis le scan (OCR)</button>
+
+      <label class="field">Projet / Œuvre
+        <input id="f-projet" type="text" />
+      </label>
+      <label class="field">Studio d'enregistrement
+        <input id="f-studio" type="text" />
+      </label>
+      <label class="field">Employé (si différent du studio)
+        <input id="f-employe" type="text" />
+      </label>
+      <label class="field">Directeur artistique
+        <input id="f-da" type="text" />
+      </label>
+      <label class="field">Date de réalisation
+        <input id="f-date" type="date" />
+      </label>
+      <label class="field">Nombre de lignes
+        <input id="f-lignes" type="number" inputmode="numeric" />
+      </label>
+      <label class="field">Montant brut (€)
+        <input id="f-brut" type="number" inputmode="decimal" step="0.01" />
+      </label>
+      <label class="field">Montant net prévu (€)
+        <input id="f-net" type="number" inputmode="decimal" step="0.01" />
+      </label>
+      <label class="field">Rôle
+        <input id="f-role" type="text" placeholder="ND" />
+      </label>
+
+      <p class="form__filename">Fichier : <span id="f-filename">…</span></p>
+    </div>
+
+    <div class="pages__actions">
+      <button class="btn-secondary" id="btn-cachet-back" type="button">Retour</button>
+      <button class="btn-primary" id="btn-cachet-save" type="button">Enregistrer</button>
     </div>
   </section>
 

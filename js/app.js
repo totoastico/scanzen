@@ -10,6 +10,8 @@ import { initCrop, cropToCanvas } from "./scanner.js";
 import { applyFilter } from "./filters.js";
 import { addPage, pageCount, getPages, clearPages } from "./pages.js";
 import { buildPdf, sharePdf } from "./pdf.js";
+import { ocrPage } from "./ocr.js";
+import { extractFields, buildFilename, buildRow } from "./contract.js";
 
 // --- État partagé de l'app ---
 const state = {
@@ -214,6 +216,121 @@ exportBtn.addEventListener("click", async () => {
   } finally {
     exportBtn.disabled = false;
   }
+});
+
+// ===================================================================
+// Fiche cachet (contrat voix off) — formulaire + nom de fichier
+// ===================================================================
+const F = {
+  projet: document.getElementById("f-projet"),
+  studio: document.getElementById("f-studio"),
+  employe: document.getElementById("f-employe"),
+  da: document.getElementById("f-da"),
+  date: document.getElementById("f-date"),
+  lignes: document.getElementById("f-lignes"),
+  brut: document.getElementById("f-brut"),
+  net: document.getElementById("f-net"),
+  role: document.getElementById("f-role"),
+};
+const fFilename = document.getElementById("f-filename");
+const cachetBtn = document.getElementById("btn-cachet");
+
+function currentFields() {
+  return {
+    projet: F.projet.value.trim(),
+    studio: F.studio.value.trim(),
+    employe: F.employe.value.trim(),
+    da: F.da.value.trim(),
+    date: F.date.value,
+    lignes: F.lignes.value.trim(),
+    brut: F.brut.value.trim(),
+    net: F.net.value.trim(),
+    role: F.role.value.trim() || "ND",
+  };
+}
+
+function refreshFilename() {
+  fFilename.textContent = buildFilename(currentFields()) + ".pdf";
+}
+[F.date, F.studio, F.da].forEach((el) => el.addEventListener("input", refreshFilename));
+
+function fillForm(f) {
+  F.projet.value = f.projet || "";
+  F.studio.value = f.studio || "";
+  F.employe.value = f.employe || "";
+  F.da.value = f.da || "";
+  F.date.value = f.date || "";
+  F.lignes.value = f.lignes || "";
+  F.brut.value = f.brut || "";
+  F.net.value = f.net || "";
+  F.role.value = f.role || "ND";
+  refreshFilename();
+}
+
+function downloadBlob(blob, name) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+// Liste → "Fiche cachet" : ouvre le formulaire (à vérifier).
+cachetBtn.addEventListener("click", () => {
+  if (pageCount() === 0) return;
+  refreshFilename();
+  showScreen("screen-contract");
+});
+
+// Formulaire → "Pré-remplir (OCR)" : devine les champs depuis le texte.
+document.getElementById("btn-prefill").addEventListener("click", async () => {
+  const pages = getPages();
+  if (!pages.length) return;
+  const btn = document.getElementById("btn-prefill");
+  const label = btn.textContent;
+  btn.disabled = true;
+  try {
+    let text = "";
+    for (let i = 0; i < pages.length; i++) {
+      btn.textContent = `Analyse ${i + 1}/${pages.length}…`;
+      const lines = await ocrPage(pages[i]);
+      text += lines.map((l) => l.text).join("\n") + "\n";
+    }
+    fillForm(extractFields(text));
+  } catch (e) {
+    console.error(e);
+    alert("L'analyse OCR a échoué. Tu peux remplir la fiche à la main.");
+  } finally {
+    btn.textContent = label;
+    btn.disabled = false;
+  }
+});
+
+document.getElementById("btn-cachet-back").addEventListener("click", () => showScreen("screen-pages"));
+
+// Formulaire → "Enregistrer" (provisoire avant Google) : copie la ligne
+// pour la feuille + télécharge le PDF nommé.
+document.getElementById("btn-cachet-save").addEventListener("click", async () => {
+  const f = currentFields();
+  const filename = buildFilename(f) + ".pdf";
+  try {
+    await navigator.clipboard.writeText(buildRow(f, filename));
+  } catch (e) {
+    /* clipboard indisponible : on continue */
+  }
+  try {
+    const blob = await buildPdf(getPages(), { ocr: false });
+    downloadBlob(blob, filename);
+  } catch (e) {
+    console.error(e);
+  }
+  alert(
+    'Fiche copiée (colle-la dans ta feuille) et PDF "' + filename + '" téléchargé.\n\n' +
+      "Le rangement automatique dans Drive + la feuille Google arrivent à l'étape suivante."
+  );
 });
 
 // --- PWA : enregistre le service worker (installation + hors-ligne) ---

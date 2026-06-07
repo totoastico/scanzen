@@ -554,3 +554,53 @@ body {
   opacity: 0.4;
   cursor: default;
 }
+
+/* --- Bouton "Fiche cachet" + formulaire contrat --- */
+.pages__cachet {
+  padding: 0 20px 4px;
+}
+.pages__cachet .btn-secondary {
+  width: 100%;
+}
+
+.form {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 8px 20px 16px;
+}
+.form .btn-secondary {
+  width: 100%;
+}
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.field input {
+  font-size: 16px; /* >=16px : évite le zoom auto sur iOS */
+  font-weight: 400;
+  color: var(--ink);
+  padding: 12px;
+  border: 1px solid #e8e8e8;
+  border-radius: 10px;
+  background: #fff;
+}
+.field input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.form__filename {
+  font-size: 13px;
+  color: var(--muted);
+  word-break: break-all;
+}
+.form__filename span {
+  color: var(--ink);
+  font-weight: 700;
+}
