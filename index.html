@@ -214,6 +214,24 @@
     </div>
   </section>
 
+  <!-- =========================================================
+       ÉCRAN DÉCOUPAGE (lot de plusieurs contrats)
+       Les pages OCRisées, regroupées par contrat. L'utilisateur
+       ajuste où commence chaque contrat avant de les traiter.
+       ========================================================= -->
+  <section class="screen screen--split" id="screen-split">
+    <header class="pages__top">
+      <span class="wordmark">Découpage</span>
+      <span class="pages__count" id="split-count">…</span>
+    </header>
+    <p class="split__hint">Vérifie où commence chaque contrat. Touche une page pour basculer « nouveau contrat / même contrat ».</p>
+    <div class="split__list" id="split-list"></div>
+    <div class="pages__actions">
+      <button class="btn-secondary" id="btn-split-back" type="button">Retour</button>
+      <button class="btn-primary" id="btn-split-confirm" type="button">Valider le découpage</button>
+    </div>
+  </section>
+
   <!-- Voile "occupé" plein écran (ex. lecture d'un PDF en cours) -->
   <div class="busy" id="busy" hidden>
     <span id="busy-text">…</span>

@@ -88,6 +88,21 @@ export function extractFields(text) {
   };
 }
 
+// Vrai si le texte d'une page ressemble au DÉBUT d'un contrat
+// (en-tête type contrat de doublage / artiste-interprète). Sert à
+// découper automatiquement un lot de pages en plusieurs contrats.
+export function isContractStart(text) {
+  const t = (text || "").toLowerCase().replace(/\s+/g, " ");
+  if (!t) return false;
+  const head = t.slice(0, 700); // l'en-tête est toujours en haut de page
+  const hasContrat = /contrat|engag[ée]/.test(head);
+  const startSig =
+    /(entre les soussign|engag[ée]\(?e?\)?\s+pour|n[°ºo]\s*d[' ]?objet|artiste[-\s]?interpr|contrat d[' ]?artiste|contrat de travail|contrat d[' ]?engagement|dur[ée]e d[ée]termin[ée]e d[' ]?usage)/.test(
+      head
+    );
+  return hasContrat && startSig;
+}
+
 // Nom de fichier : YY-MM_studio_(DA si présent, sinon projet).
 export function buildFilename(f) {
   let ym = "AA-MM";

@@ -10,8 +10,8 @@ import { initCrop, cropToCanvas } from "./scanner.js";
 import { applyFilter } from "./filters.js";
 import { addPage, pageCount, getPages, clearPages } from "./pages.js";
 import { buildPdf, sharePdf } from "./pdf.js";
-import { ocrPage } from "./ocr.js";
-import { extractFields, buildFilename, buildRow } from "./contract.js";
+import { ocrPage, terminateOcr } from "./ocr.js";
+import { extractFields, buildFilename, isContractStart } from "./contract.js";
 import { pdfToImages, isPdf } from "./pdfimport.js";
 
 // --- État partagé de l'app ---
@@ -358,26 +358,166 @@ function downloadBlob(blob, name) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-// Liste → "Fiche cachet" : ouvre le formulaire (à vérifier).
-cachetBtn.addEventListener("click", () => {
+// ===================================================================
+// Découpage intelligent : 1 lot de pages → 1 ou plusieurs contrats
+// ===================================================================
+// Après "Fiche cachet" : on OCRise chaque page, on PROPOSE un découpage
+// (1 contrat = 1 ou plusieurs pages), tu ajustes, puis on traite chaque
+// contrat l'un après l'autre (1 PDF + 1 ligne chacun).
+
+let pageTexts = [];        // texte OCR de chaque page (même ordre que getPages)
+let splitFlags = [];       // splitFlags[i] = true → la page i démarre un contrat
+let cachetContracts = [];  // [{ pages:[dataURL], text }]
+let cachetIndex = 0;       // contrat en cours de saisie
+
+const splitListEl = document.getElementById("split-list");
+const splitCountEl = document.getElementById("split-count");
+
+// OCR de toutes les pages, avec voile de progression.
+async function ocrAllPages() {
+  const pages = getPages();
+  pageTexts = [];
+  for (let i = 0; i < pages.length; i++) {
+    showBusy(`Analyse du texte… page ${i + 1}/${pages.length}`);
+    try {
+      const lines = await ocrPage(pages[i], (p) =>
+        showBusy(`Analyse du texte… page ${i + 1}/${pages.length} — ${Math.round((p || 0) * 100)}%`)
+      );
+      pageTexts.push(lines.map((l) => l.text).join("\n"));
+    } catch (e) {
+      console.error(e);
+      pageTexts.push("");
+    }
+  }
+  try { await terminateOcr(); } catch (e) { /* libère la mémoire OCR */ }
+}
+
+// Devine où commence chaque contrat (la 1re page est toujours un début).
+function computeSplitFlags() {
+  splitFlags = getPages().map((_, i) => (i === 0 ? true : isContractStart(pageTexts[i] || "")));
+}
+
+// Regroupe les pages en contrats selon le découpage.
+function buildContracts() {
+  const pages = getPages();
+  const out = [];
+  pages.forEach((url, i) => {
+    if (splitFlags[i] || out.length === 0) {
+      out.push({ pages: [url], texts: [pageTexts[i] || ""] });
+    } else {
+      const c = out[out.length - 1];
+      c.pages.push(url);
+      c.texts.push(pageTexts[i] || "");
+    }
+  });
+  return out.map((c) => ({ pages: c.pages, text: c.texts.join("\n") }));
+}
+
+// Liste → "Fiche cachet" : OCR puis découpage proposé.
+cachetBtn.addEventListener("click", async () => {
   if (pageCount() === 0) return;
-  refreshFilename();
-  showScreen("screen-contract");
+  try {
+    await ocrAllPages();
+  } finally {
+    hideBusy();
+  }
+  computeSplitFlags();
+  if (getPages().length <= 1) {
+    cachetContracts = buildContracts();
+    startCachetContract(0);
+  } else {
+    renderSplit();
+    showScreen("screen-split");
+  }
 });
 
-// Formulaire → "Pré-remplir (OCR)" : devine les champs depuis le texte.
-document.getElementById("btn-prefill").addEventListener("click", async () => {
+// Dessine l'écran de découpage (pages groupées par contrat).
+function renderSplit() {
   const pages = getPages();
-  if (!pages.length) return;
+  splitListEl.innerHTML = "";
+  let contractNo = 0;
+  pages.forEach((url, i) => {
+    if (splitFlags[i]) {
+      contractNo++;
+      const title = document.createElement("div");
+      title.className = "split-group__title";
+      title.textContent = "Contrat " + contractNo;
+      splitListEl.appendChild(title);
+    }
+    const card = document.createElement("div");
+    card.className = "split-page";
+
+    const thumb = document.createElement("img");
+    thumb.className = "split-page__thumb";
+    thumb.src = url;
+    thumb.alt = "Page " + (i + 1);
+
+    const info = document.createElement("div");
+    info.className = "split-page__info";
+    const num = document.createElement("span");
+    num.className = "split-page__num";
+    num.textContent = "Page " + (i + 1);
+    info.appendChild(num);
+
+    if (i === 0) {
+      const badge = document.createElement("span");
+      badge.className = "split-page__badge";
+      badge.textContent = "Début";
+      info.appendChild(badge);
+    } else {
+      const toggle = document.createElement("button");
+      toggle.type = "button";
+      toggle.className = "split-toggle" + (splitFlags[i] ? " split-toggle--start" : "");
+      toggle.textContent = splitFlags[i] ? "✂️ nouveau contrat" : "↳ même contrat";
+      toggle.addEventListener("click", () => {
+        splitFlags[i] = !splitFlags[i];
+        renderSplit();
+      });
+      info.appendChild(toggle);
+    }
+
+    card.append(thumb, info);
+    splitListEl.appendChild(card);
+  });
+  splitCountEl.textContent = contractNo + (contractNo <= 1 ? " contrat" : " contrats");
+}
+
+document.getElementById("btn-split-back").addEventListener("click", () => showScreen("screen-pages"));
+document.getElementById("btn-split-confirm").addEventListener("click", () => {
+  cachetContracts = buildContracts();
+  startCachetContract(0);
+});
+
+// Affiche le formulaire pré-rempli pour le contrat n° i du lot.
+function startCachetContract(i) {
+  cachetIndex = i;
+  const total = cachetContracts.length;
+  const c = cachetContracts[i];
+  fillForm(extractFields(c.text || ""));
+  document.querySelector("#screen-contract .wordmark").textContent =
+    total > 1 ? `Fiche cachet ${i + 1}/${total}` : "Fiche cachet";
+  document.getElementById("btn-cachet-save").textContent =
+    total > 1 ? `Enregistrer (${i + 1}/${total})` : "Enregistrer";
+  showScreen("screen-contract");
+}
+
+// Formulaire → "Pré-remplir (OCR)" : ré-applique l'extraction au contrat courant.
+document.getElementById("btn-prefill").addEventListener("click", async () => {
+  const c = cachetContracts[cachetIndex];
+  if (!c) return;
   const btn = document.getElementById("btn-prefill");
   const label = btn.textContent;
   btn.disabled = true;
   try {
-    let text = "";
-    for (let i = 0; i < pages.length; i++) {
-      btn.textContent = `Analyse ${i + 1}/${pages.length}…`;
-      const lines = await ocrPage(pages[i]);
-      text += lines.map((l) => l.text).join("\n") + "\n";
+    let text = c.text;
+    if (!text) {
+      let acc = "";
+      for (let i = 0; i < c.pages.length; i++) {
+        btn.textContent = `Analyse ${i + 1}/${c.pages.length}…`;
+        const lines = await ocrPage(c.pages[i]);
+        acc += lines.map((l) => l.text).join("\n") + "\n";
+      }
+      c.text = text = acc;
     }
     fillForm(extractFields(text));
   } catch (e) {
@@ -389,7 +529,10 @@ document.getElementById("btn-prefill").addEventListener("click", async () => {
   }
 });
 
-document.getElementById("btn-cachet-back").addEventListener("click", () => showScreen("screen-pages"));
+// Retour depuis le formulaire : vers le découpage (si lot) ou la liste.
+document.getElementById("btn-cachet-back").addEventListener("click", () => {
+  showScreen(cachetContracts.length > 1 ? "screen-split" : "screen-pages");
+});
 
 function blobToDataURL(blob) {
   return new Promise((resolve, reject) => {
@@ -418,20 +561,22 @@ document.getElementById("btn-config-gas").addEventListener("click", () => {
   if (getConnectorUrl(true)) alert("Connecteur enregistré ✅");
 });
 
-// Fiche → "Enregistrer" : envoie le PDF + la fiche au connecteur Google
-// (qui range le PDF dans Drive et ajoute la ligne dans la feuille).
+// Fiche → "Enregistrer" : envoie le contrat COURANT au connecteur Google,
+// puis passe au contrat suivant du lot (ou termine).
 document.getElementById("btn-cachet-save").addEventListener("click", async () => {
-  const url = getConnectorUrl(false);
-  if (!url) return; // aucun connecteur configuré
+  let url = getConnectorUrl(false);
+  if (!url) url = getConnectorUrl(true); // pas encore réglé → on demande
+  if (!url) return; // annulé
 
   const f = currentFields();
   const filename = buildFilename(f) + ".pdf";
+  const total = cachetContracts.length || 1;
+  const c = cachetContracts[cachetIndex] || { pages: getPages() };
   const btn = document.getElementById("btn-cachet-save");
-  const label = btn.textContent;
   btn.disabled = true;
   btn.textContent = "Envoi…";
   try {
-    const blob = await buildPdf(getPages(), { ocr: false });
+    const blob = await buildPdf(c.pages, { ocr: false });
     const pdfBase64 = (await blobToDataURL(blob)).split(",")[1];
     const payload = {
       filename,
@@ -446,16 +591,20 @@ document.getElementById("btn-cachet-save").addEventListener("click", async () =>
       headers: { "Content-Type": "text/plain;charset=utf-8" },
       body: JSON.stringify(payload),
     });
-    alert("Envoyé ✅\nPDF rangé dans Drive + ligne ajoutée à ta feuille.\n(Vérifie ta feuille ; si rien n'apparaît, re-règle l'URL via ⚙️ Connecteur Google.)");
-    clearPages();
-    pendingPdf = null;
-    exportBtn.textContent = EXPORT_LABEL;
-    showScreen("screen-home");
+    if (cachetIndex < total - 1) {
+      startCachetContract(cachetIndex + 1); // contrat suivant du lot
+    } else {
+      alert(`Envoyé ✅ ${total > 1 ? total + " cachets rangés" : "Cachet rangé"} dans Drive + feuille.\n(Si rien n'apparaît, re-règle l'URL via ⚙️ Connecteur Google.)`);
+      clearPages();
+      pendingPdf = null;
+      exportBtn.textContent = EXPORT_LABEL;
+      showScreen("screen-home");
+    }
   } catch (e) {
     console.error(e);
     alert("Échec de l'envoi. Vérifie l'URL du connecteur (⚙️ Connecteur Google).");
+    btn.textContent = total > 1 ? `Enregistrer (${cachetIndex + 1}/${total})` : "Enregistrer";
   } finally {
-    btn.textContent = label;
     btn.disabled = false;
   }
 });
