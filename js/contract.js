@@ -42,6 +42,18 @@ function toIso(raw) {
   return `${y}-${String(+mo).padStart(2, "0")}-${String(+d).padStart(2, "0")}`;
 }
 
+// Enlève les MAJUSCULES inutiles : un mot écrit TOUT EN CAPITALES devient
+// "Capitalisé" (1re lettre majuscule, reste minuscule). Les mots déjà en
+// casse normale ne changent pas. Ex. "VINCENT VIOLETTE" → "Vincent Violette".
+function softTitle(s) {
+  return clean(s).replace(/\S+/g, (w) => {
+    if (w.length >= 2 && w === w.toUpperCase() && w.toLowerCase() !== w.toUpperCase()) {
+      return w.charAt(0).toUpperCase() + w.slice(1).toLowerCase();
+    }
+    return w;
+  });
+}
+
 export function extractFields(text) {
   const T = (text || "").replace(/ /g, " ").replace(/\s+/g, " ");
 
@@ -75,16 +87,20 @@ export function extractFields(text) {
     (T.match(/lignes?\s*:?\s*(\d+)/i) || [])[1] ||
     "";
 
+  const studioName = softTitle(studio);
+  const roleName = softTitle(role);
   return {
-    projet: clean(projet),
-    studio: clean(studio),
-    employe: "", // l'artiste, c'est toi : à remplir à la main si besoin
-    da: clean(da),
+    projet: softTitle(projet),
+    studio: studioName,
+    // Par défaut l'employeur = le studio (recopié à l'identique). À corriger
+    // dans le formulaire si l'employeur diffère du studio d'enregistrement.
+    employe: studioName,
+    da: softTitle(da),
     date: toIso(dateRaw),
     lignes: lignes || "",
     brut: findAmount(T, "brut"),
     net: findAmount(T, "\\bnet\\b"),
-    role: clean(role) || "ND",
+    role: roleName || "ND",
   };
 }
 

@@ -30,16 +30,29 @@
        ========================================================= -->
   <section class="screen screen--active" id="screen-home">
     <div class="home">
-      <!-- LE bouton central : l'élément dominant de l'interface -->
-      <button class="scan-button" id="btn-scan" type="button">
-        Scanzenons
-      </button>
+      <!-- Deux entrées : scanner un document, ou traiter un contrat (cachet).
+           Chaque bulle propose photo (le gros bouton) ou téléversement. -->
+      <div class="home-choice">
+        <button class="bubble" id="btn-scan" type="button">
+          <span class="bubble__title">Scanner</span>
+          <span class="bubble__sub">Document → PDF</span>
+        </button>
+        <label class="upload-link">
+          <span class="upload-link__icon">⤓</span> Téléverser (image ou PDF)
+          <input type="file" id="file-input" accept="image/*,application/pdf" multiple hidden />
+        </label>
+      </div>
 
-      <!-- Option discrète : importer des images ou des PDF existants -->
-      <label class="upload-link">
-        <span class="upload-link__icon">⤓</span> Téléverser (image ou PDF)
-        <input type="file" id="file-input" accept="image/*,application/pdf" multiple hidden />
-      </label>
+      <div class="home-choice">
+        <button class="bubble bubble--accent" id="btn-cachet-home" type="button">
+          <span class="bubble__title">Cachet</span>
+          <span class="bubble__sub">Contrat → Drive + feuille</span>
+        </button>
+        <label class="upload-link">
+          <span class="upload-link__icon">⤓</span> Téléverser un contrat
+          <input type="file" id="cachet-file-input" accept="image/*,application/pdf" multiple hidden />
+        </label>
+      </div>
 
       <span class="brand">scanzen</span>
     </div>
@@ -54,9 +67,10 @@
     <!-- Le flux vidéo de la caméra (rempli au démarrage par camera.js) -->
     <video class="camera__video" id="camera-video" autoplay playsinline muted></video>
 
-    <!-- Barre du haut : fermer -->
+    <!-- Barre du haut : fermer + (mode cachet) terminer la prise de pages -->
     <div class="camera__top">
       <button class="icon-button" id="btn-close-camera" type="button" aria-label="Fermer">✕</button>
+      <button class="camera__done" id="btn-camera-done" type="button" hidden>Terminer (0)</button>
     </div>
 
     <!-- Barre du bas : bouton de capture (dominant) -->
@@ -224,7 +238,7 @@
       <span class="wordmark">Découpage</span>
       <span class="pages__count" id="split-count">…</span>
     </header>
-    <p class="split__hint">Vérifie où commence chaque contrat. Touche une page pour basculer « nouveau contrat / même contrat ».</p>
+    <p class="split__hint">Voici les contrats détectés. Ajuste si besoin, puis valide.</p>
     <div class="split__list" id="split-list"></div>
     <div class="pages__actions">
       <button class="btn-secondary" id="btn-split-back" type="button">Retour</button>

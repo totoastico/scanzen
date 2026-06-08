@@ -105,6 +105,61 @@ body {
 .upload-link:active {
   opacity: 0.6;
 }
+
+/* --- Accueil : deux "bulles" (Scanner / Cachet) --- */
+.home-choice {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  max-width: 360px;
+}
+.home-choice + .home-choice {
+  margin-top: 26px;
+}
+.bubble {
+  width: 100%;
+  min-height: 118px;
+  border-radius: 24px;
+  border: 2px solid var(--ink);
+  background: #fff;
+  color: var(--ink);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition: transform 0.08s ease;
+}
+.bubble:active {
+  transform: scale(0.97);
+}
+.bubble__title {
+  font-size: 28px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+.bubble__sub {
+  font-size: 14px;
+  color: var(--muted);
+}
+.bubble--accent {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  box-shadow: 0 10px 30px rgba(37, 99, 235, 0.28);
+}
+.bubble--accent .bubble__sub {
+  color: rgba(255, 255, 255, 0.85);
+}
+.bubble--accent:active {
+  background: var(--accent-press);
+}
+.home-choice .upload-link {
+  margin-top: 10px;
+}
 .home__title {
   font-size: clamp(32px, 9vw, 44px);
   font-weight: 800;
@@ -173,8 +228,26 @@ body {
   left: 0;
   right: 0;
   z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   padding: 16px;
   padding-top: calc(16px + env(safe-area-inset-top));
+}
+/* Mode cachet : bouton "Terminer" (passe au découpage) */
+.camera__done {
+  border: none;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-weight: 700;
+  font-size: 15px;
+  padding: 10px 18px;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.camera__done[hidden] {
+  display: none;
 }
 .camera__bottom {
   position: absolute;
@@ -661,62 +734,104 @@ body {
   overflow-y: auto;
   padding: 0 20px 16px;
 }
-.split-group__title {
-  font-weight: 800;
-  font-size: 15px;
-  margin: 14px 0 6px;
-  color: var(--ink);
-  border-top: 2px solid var(--accent);
-  padding-top: 8px;
+/* Une carte = un contrat détecté */
+.ct-card {
+  border: 1px solid #e6e6e6;
+  border-left: 4px solid var(--accent);
+  border-radius: 14px;
+  padding: 12px 14px;
+  margin-bottom: 14px;
+  background: #fff;
 }
-.split-group__title:first-child {
-  margin-top: 2px;
-}
-.split-page {
+.ct-card__head {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 6px 0;
+  gap: 8px;
+  margin-bottom: 10px;
 }
-.split-page__thumb {
-  width: 52px;
-  height: 70px;
+.ct-card__badge {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  font-weight: 800;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+}
+.ct-card__title {
+  font-weight: 800;
+  font-size: 16px;
+}
+.ct-card__meta {
+  color: var(--muted);
+  font-size: 13px;
+}
+.ct-card__merge {
+  margin-left: auto;
+  border: 1px solid #e0e0e0;
+  background: #f5f5f5;
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 999px;
+  padding: 5px 10px;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.ct-card__pages {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.ct-thumb {
+  position: relative;
+  width: 64px;
+}
+.ct-thumb img {
+  width: 64px;
+  height: 84px;
   object-fit: cover;
   border-radius: 8px;
   border: 1px solid #e8e8e8;
   background: #fff;
-  flex: none;
+  display: block;
 }
-.split-page__info {
+.ct-thumb__n {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  border-radius: 6px;
+  padding: 1px 6px;
+}
+.ct-splits {
+  margin-top: 10px;
   display: flex;
   flex-direction: column;
-  gap: 5px;
-  align-items: flex-start;
+  gap: 6px;
 }
-.split-page__num {
-  font-size: 13px;
+.ct-split {
+  align-self: flex-start;
+  border: 1px dashed #c9c9c9;
+  background: #fafafa;
   color: var(--muted);
-}
-.split-page__badge {
   font-size: 12px;
-  font-weight: 700;
-  color: var(--accent);
-}
-.split-toggle {
-  font-size: 13px;
   font-weight: 600;
-  padding: 6px 12px;
-  border-radius: 999px;
-  border: 1px solid #e0e0e0;
-  background: #f4f4f4;
-  color: var(--muted);
+  border-radius: 8px;
+  padding: 5px 10px;
   cursor: pointer;
   touch-action: manipulation;
 }
-.split-toggle--start {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #fff;
+.ct-split:active,
+.ct-card__merge:active {
+  opacity: 0.6;
 }
 
 /* Écran fiche cachet : colonne étroite et centrée

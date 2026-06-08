@@ -26,6 +26,16 @@ const state = {
 let pendingPdf = null; // PDF préparé, en attente d'un appui pour le partager
 const EXPORT_LABEL = "Exporter en PDF";
 
+// --- Mode de la caméra / parcours ---
+let cameraMode = "scan";                  // "scan" (Scanner) ou "cachet" (Contrat)
+let cachetPages = [];                     // images du lot cachet en cours (≠ pages scan)
+let cachetReturnScreen = "screen-home";   // où revenir depuis le découpage
+let sentFirstPages = new Set();           // contrats déjà envoyés (clé = 1re page) → anti-doublon
+
+// Pour Google Sheets en français : la virgule décimale fait reconnaître le
+// nombre (et afficher le €), contrairement au point.
+const toComma = (v) => (v == null ? "" : String(v)).replace(".", ",");
+
 // --- Éléments de la page dont on a besoin ---
 const video = document.getElementById("camera-video");
 const cameraError = document.getElementById("camera-error");
@@ -66,10 +76,22 @@ function rotateCanvas(canvas, deg) {
   return out;
 }
 
-// --- Ouvrir la caméra (accueil, "Reprendre" ou "Ajouter une page") ---
+// En mode cachet, affiche le bouton "Terminer (N)" sur la caméra.
+function updateCameraDone() {
+  const done = document.getElementById("btn-camera-done");
+  if (cameraMode === "cachet") {
+    done.hidden = false;
+    done.textContent = `Terminer (${cachetPages.length})`;
+  } else {
+    done.hidden = true;
+  }
+}
+
+// --- Ouvrir la caméra (Scanner, Cachet, "Reprendre" ou "Ajouter une page") ---
 async function openCamera() {
   showScreen("screen-camera");
   cameraError.hidden = true;
+  updateCameraDone();
   try {
     await startCamera(video);
   } catch (err) {
@@ -78,10 +100,23 @@ async function openCamera() {
   }
 }
 
-// --- Fermer la caméra : retour à la liste s'il y a déjà des pages,
-//     sinon à l'accueil. ---
+// --- Fermer la caméra. En mode cachet : on confirme si des pages ont déjà
+//     été prises (sinon elles seraient perdues), puis retour accueil. Sinon
+//     → liste si pages, sinon accueil. ---
 function closeCamera() {
+  if (cameraMode === "cachet" && cachetPages.length > 0) {
+    const n = cachetPages.length;
+    if (!confirm(`Quitter sans traiter ${n} page${n > 1 ? "s" : ""} ? Elles seront perdues.`)) {
+      return; // l'utilisateur annule → on reste sur la caméra
+    }
+  }
   stopCamera(video);
+  if (cameraMode === "cachet") {
+    cachetPages = [];
+    cameraMode = "scan";
+    showScreen("screen-home");
+    return;
+  }
   showScreen(pageCount() > 0 ? "screen-pages" : "screen-home");
 }
 
@@ -122,7 +157,19 @@ function rotate(delta) {
 // Branchement des boutons
 // ===================================================================
 
-document.getElementById("btn-scan").addEventListener("click", openCamera);
+// Accueil → bulle "Scanner" : caméra en mode scan (document → PDF).
+document.getElementById("btn-scan").addEventListener("click", () => {
+  cameraMode = "scan";
+  openCamera();
+});
+
+// Accueil → bulle "Cachet" : caméra en mode cachet (contrat → découpage).
+document.getElementById("btn-cachet-home").addEventListener("click", () => {
+  cameraMode = "cachet";
+  cachetPages = [];
+  cachetReturnScreen = "screen-home";
+  openCamera();
+});
 
 // --- Téléversement d'images existantes (une ou plusieurs) ---
 let importQueue = [];
@@ -172,28 +219,34 @@ async function startNextImport() {
   showResult();
 }
 
-// Accueil → "Téléverser" : importe une ou plusieurs IMAGES et/ou PDF.
-// Un PDF est converti en images (1 par page) ; tout passe ensuite par le
-// même parcours (recadrage → filtre → liste). Word/.docx non géré.
+// Transforme les fichiers choisis (images et/ou PDF) en une liste d'images.
+// Un PDF est rendu page par page. Word/.docx non géré.
+async function filesToImages(files) {
+  const images = [];
+  for (const file of files) {
+    if (isPdf(file)) {
+      showBusy("Lecture du PDF…");
+      const pages = await pdfToImages(file, (i, total) =>
+        showBusy(`Lecture du PDF… page ${i}/${total}`)
+      );
+      images.push(...pages);
+    } else if (file.type.startsWith("image/")) {
+      images.push(await readFileAsDataURL(file));
+    } else {
+      alert(`« ${file.name} » n'est ni une image ni un PDF.\nPour un fichier Word, enregistre-le d'abord en PDF.`);
+    }
+  }
+  return images;
+}
+
+// Accueil → "Scanner > Téléverser" : images/PDF → parcours scan (sans rognage).
 document.getElementById("file-input").addEventListener("change", async (e) => {
   const files = Array.from(e.target.files || []);
   e.target.value = ""; // permet de re-sélectionner les mêmes fichiers
   if (!files.length) return;
+  cameraMode = "scan"; // le "Reprendre" de l'écran résultat doit rester en mode scan
   try {
-    const images = [];
-    for (const file of files) {
-      if (isPdf(file)) {
-        showBusy("Lecture du PDF…");
-        const pages = await pdfToImages(file, (i, total) =>
-          showBusy(`Lecture du PDF… page ${i}/${total}`)
-        );
-        images.push(...pages);
-      } else if (file.type.startsWith("image/")) {
-        images.push(await readFileAsDataURL(file));
-      } else {
-        alert(`« ${file.name} » n'est ni une image ni un PDF.\nPour un fichier Word, enregistre-le d'abord en PDF.`);
-      }
-    }
+    const images = await filesToImages(files);
     hideBusy();
     if (!images.length) return;
     importQueue = images;
@@ -206,16 +259,52 @@ document.getElementById("file-input").addEventListener("change", async (e) => {
   startNextImport();
 });
 
+// Accueil → "Cachet > Téléverser" : images/PDF → DIRECTEMENT le découpage
+// (pas de rognage, pas d'écran filtre).
+document.getElementById("cachet-file-input").addEventListener("change", async (e) => {
+  const files = Array.from(e.target.files || []);
+  e.target.value = "";
+  if (!files.length) return;
+  try {
+    const images = await filesToImages(files);
+    hideBusy();
+    if (!images.length) return;
+    cachetReturnScreen = "screen-home";
+    await startCachetFlow(images);
+  } catch (err) {
+    hideBusy();
+    console.error(err);
+    alert("Impossible de lire ce fichier. " + (err.message || ""));
+  }
+});
+
 document.getElementById("btn-close-camera").addEventListener("click", closeCamera);
 document.getElementById("btn-camera-back").addEventListener("click", closeCamera);
 
-// Caméra → capturer (l'image affichée) puis aperçu
+// Caméra → capturer.
+//  - mode scan  : aperçu → recadrage → filtre → liste.
+//  - mode cachet: on accumule la page (sans rognage) et on reste sur la
+//    caméra pour la page suivante ; "Terminer" lance le découpage.
 document.getElementById("btn-capture").addEventListener("click", () => {
-  state.capturedImage = capturePhoto(video);
+  const img = capturePhoto(video);
+  if (cameraMode === "cachet") {
+    cachetPages.push(img);
+    updateCameraDone();
+    return;
+  }
+  state.capturedImage = img;
   state.activeFilter = "auto"; // photo → filtre "Auto" par défaut (≠ téléversement)
-  previewImage.src = state.capturedImage;
+  previewImage.src = img;
   stopCamera(video);
   showScreen("screen-preview");
+});
+
+// Caméra (mode cachet) → "Terminer" : lance le découpage des pages prises.
+document.getElementById("btn-camera-done").addEventListener("click", async () => {
+  if (cachetPages.length === 0) return;
+  stopCamera(video);
+  cachetReturnScreen = "screen-home";
+  await startCachetFlow(cachetPages.slice());
 });
 
 // Aperçu → "Reprendre"
@@ -262,7 +351,10 @@ document.getElementById("btn-add-to-list").addEventListener("click", () => {
 });
 
 // Liste → "+ Ajouter une page"
-document.getElementById("btn-add-page").addEventListener("click", openCamera);
+document.getElementById("btn-add-page").addEventListener("click", () => {
+  cameraMode = "scan";
+  openCamera();
+});
 
 // Après un export réussi : on vide la liste (le scan est terminé) et on
 // revient à l'accueil.
@@ -376,17 +468,6 @@ function fillForm(f) {
   refreshFilename();
 }
 
-function downloadBlob(blob, name) {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = name;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
-}
-
 // ===================================================================
 // Découpage intelligent : 1 lot de pages → 1 ou plusieurs contrats
 // ===================================================================
@@ -404,7 +485,7 @@ const splitCountEl = document.getElementById("split-count");
 
 // OCR de toutes les pages, avec voile de progression.
 async function ocrAllPages() {
-  const pages = getPages();
+  const pages = cachetPages;
   pageTexts = [];
   for (let i = 0; i < pages.length; i++) {
     showBusy(`Analyse du texte… page ${i + 1}/${pages.length}`);
@@ -423,12 +504,12 @@ async function ocrAllPages() {
 
 // Devine où commence chaque contrat (la 1re page est toujours un début).
 function computeSplitFlags() {
-  splitFlags = getPages().map((_, i) => (i === 0 ? true : isContractStart(pageTexts[i] || "")));
+  splitFlags = cachetPages.map((_, i) => (i === 0 ? true : isContractStart(pageTexts[i] || "")));
 }
 
 // Regroupe les pages en contrats selon le découpage.
 function buildContracts() {
-  const pages = getPages();
+  const pages = cachetPages;
   const out = [];
   pages.forEach((url, i) => {
     if (splitFlags[i] || out.length === 0) {
@@ -442,83 +523,149 @@ function buildContracts() {
   return out.map((c) => ({ pages: c.pages, text: c.texts.join("\n") }));
 }
 
-// Liste → "Fiche cachet" : OCR puis découpage proposé.
-cachetBtn.addEventListener("click", async () => {
-  if (pageCount() === 0) return;
+// Lance le parcours cachet sur un lot d'images : OCR → découpage (ou
+// directement le formulaire s'il n'y a qu'une page).
+async function startCachetFlow(images) {
+  if (!images || !images.length) return;
+  cachetPages = images;
+  sentFirstPages = new Set(); // nouveau lot → on repart de zéro pour l'anti-doublon
   try {
     await ocrAllPages();
   } finally {
     hideBusy();
   }
   computeSplitFlags();
-  if (getPages().length <= 1) {
+  if (cachetPages.length <= 1) {
     cachetContracts = buildContracts();
     startCachetContract(0);
   } else {
     renderSplit();
     showScreen("screen-split");
   }
-});
-
-// Dessine l'écran de découpage (pages groupées par contrat).
-function renderSplit() {
-  const pages = getPages();
-  splitListEl.innerHTML = "";
-  let contractNo = 0;
-  pages.forEach((url, i) => {
-    if (splitFlags[i]) {
-      contractNo++;
-      const title = document.createElement("div");
-      title.className = "split-group__title";
-      title.textContent = "Contrat " + contractNo;
-      splitListEl.appendChild(title);
-    }
-    const card = document.createElement("div");
-    card.className = "split-page";
-
-    const thumb = document.createElement("img");
-    thumb.className = "split-page__thumb";
-    thumb.src = url;
-    thumb.alt = "Page " + (i + 1);
-
-    const info = document.createElement("div");
-    info.className = "split-page__info";
-    const num = document.createElement("span");
-    num.className = "split-page__num";
-    num.textContent = "Page " + (i + 1);
-    info.appendChild(num);
-
-    if (i === 0) {
-      const badge = document.createElement("span");
-      badge.className = "split-page__badge";
-      badge.textContent = "Début";
-      info.appendChild(badge);
-    } else {
-      const toggle = document.createElement("button");
-      toggle.type = "button";
-      toggle.className = "split-toggle" + (splitFlags[i] ? " split-toggle--start" : "");
-      toggle.textContent = splitFlags[i] ? "✂️ nouveau contrat" : "↳ même contrat";
-      toggle.addEventListener("click", () => {
-        splitFlags[i] = !splitFlags[i];
-        renderSplit();
-      });
-      info.appendChild(toggle);
-    }
-
-    card.append(thumb, info);
-    splitListEl.appendChild(card);
-  });
-  splitCountEl.textContent = contractNo + (contractNo <= 1 ? " contrat" : " contrats");
 }
 
-document.getElementById("btn-split-back").addEventListener("click", () => showScreen("screen-pages"));
+// Liste (parcours scan) → "Fiche cachet" : traite les pages scannées comme
+// un (ou plusieurs) contrat(s).
+cachetBtn.addEventListener("click", async () => {
+  if (pageCount() === 0) return;
+  cachetReturnScreen = "screen-pages";
+  await startCachetFlow(getPages());
+});
+
+// Dessine l'écran de découpage : une CARTE par contrat détecté, avec ses
+// pages en vignettes. Boutons clairs pour fusionner / séparer.
+function renderSplit() {
+  const pages = cachetPages;
+  splitListEl.innerHTML = "";
+
+  // Construire les groupes (contrats) à partir de splitFlags.
+  const groups = [];
+  pages.forEach((url, i) => {
+    if (splitFlags[i] || groups.length === 0) groups.push([i]);
+    else groups[groups.length - 1].push(i);
+  });
+
+  groups.forEach((idxs, gi) => {
+    const card = document.createElement("div");
+    card.className = "ct-card";
+
+    // En-tête : numéro + "Contrat N" + nb de pages (+ fusionner si pas le 1er)
+    const head = document.createElement("div");
+    head.className = "ct-card__head";
+    const badge = document.createElement("span");
+    badge.className = "ct-card__badge";
+    badge.textContent = String(gi + 1);
+    const title = document.createElement("span");
+    title.className = "ct-card__title";
+    title.textContent = "Contrat " + (gi + 1);
+    const meta = document.createElement("span");
+    meta.className = "ct-card__meta";
+    meta.textContent = "· " + idxs.length + (idxs.length > 1 ? " pages" : " page");
+    head.append(badge, title, meta);
+    if (gi > 0) {
+      const merge = document.createElement("button");
+      merge.type = "button";
+      merge.className = "ct-card__merge";
+      merge.textContent = "↑ Fusionner";
+      merge.addEventListener("click", () => {
+        splitFlags[idxs[0]] = false;
+        renderSplit();
+      });
+      head.appendChild(merge);
+    }
+    card.appendChild(head);
+
+    // Vignettes des pages du contrat
+    const pagesRow = document.createElement("div");
+    pagesRow.className = "ct-card__pages";
+    idxs.forEach((i) => {
+      const cell = document.createElement("div");
+      cell.className = "ct-thumb";
+      const img = document.createElement("img");
+      img.src = pages[i];
+      img.alt = "Page " + (i + 1);
+      const n = document.createElement("span");
+      n.className = "ct-thumb__n";
+      n.textContent = String(i + 1);
+      cell.append(img, n);
+      pagesRow.appendChild(cell);
+    });
+    card.appendChild(pagesRow);
+
+    // Si le contrat a plusieurs pages : proposer de le couper.
+    if (idxs.length > 1) {
+      const splits = document.createElement("div");
+      splits.className = "ct-splits";
+      idxs.slice(1).forEach((i) => {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "ct-split";
+        b.textContent = "Couper : nouveau contrat dès la page " + (i + 1);
+        b.addEventListener("click", () => {
+          splitFlags[i] = true;
+          renderSplit();
+        });
+        splits.appendChild(b);
+      });
+      card.appendChild(splits);
+    }
+
+    splitListEl.appendChild(card);
+  });
+
+  const n = groups.length;
+  splitCountEl.textContent = n + (n <= 1 ? " contrat" : " contrats");
+}
+
+document.getElementById("btn-split-back").addEventListener("click", () => showScreen(cachetReturnScreen));
 document.getElementById("btn-split-confirm").addEventListener("click", () => {
   cachetContracts = buildContracts();
   startCachetContract(0);
 });
 
-// Affiche le formulaire pré-rempli pour le contrat n° i du lot.
+// Fin du lot cachet : message récap, nettoyage et retour à l'accueil.
+function finishCachet() {
+  const sent = sentFirstPages.size;
+  if (sent > 0) {
+    alert(`Envoyé ✅ ${sent > 1 ? sent + " cachets rangés" : "Cachet rangé"} dans Drive + feuille.\n(Si rien n'apparaît, re-règle l'URL via ⚙️ Connecteur Google.)`);
+  }
+  if (cachetReturnScreen === "screen-pages") clearPages(); // ne vide la liste scan QUE si elle en était la source
+  cachetPages = [];
+  cameraMode = "scan";
+  pendingPdf = null;
+  exportBtn.textContent = EXPORT_LABEL;
+  showScreen("screen-home");
+}
+
+// Affiche le formulaire pré-rempli pour le contrat n° i du lot. Saute les
+// contrats déjà envoyés (anti-doublon si on revient en arrière) et termine
+// le lot s'il n'en reste plus.
 function startCachetContract(i) {
+  while (cachetContracts[i] && sentFirstPages.has(cachetContracts[i].pages[0])) i++;
+  if (i >= cachetContracts.length) {
+    finishCachet();
+    return;
+  }
   cachetIndex = i;
   const total = cachetContracts.length;
   const c = cachetContracts[i];
@@ -558,9 +705,9 @@ document.getElementById("btn-prefill").addEventListener("click", async () => {
   }
 });
 
-// Retour depuis le formulaire : vers le découpage (si lot) ou la liste.
+// Retour depuis le formulaire : vers le découpage (si lot) ou l'écran d'origine.
 document.getElementById("btn-cachet-back").addEventListener("click", () => {
-  showScreen(cachetContracts.length > 1 ? "screen-split" : "screen-pages");
+  showScreen(cachetContracts.length > 1 ? "screen-split" : cachetReturnScreen);
 });
 
 function blobToDataURL(blob) {
@@ -600,7 +747,7 @@ document.getElementById("btn-cachet-save").addEventListener("click", async () =>
   const f = currentFields();
   const filename = buildFilename(f) + ".pdf";
   const total = cachetContracts.length || 1;
-  const c = cachetContracts[cachetIndex] || { pages: getPages() };
+  const c = cachetContracts[cachetIndex] || { pages: cachetPages };
   const btn = document.getElementById("btn-cachet-save");
   btn.disabled = true;
   btn.textContent = "Envoi…";
@@ -611,7 +758,8 @@ document.getElementById("btn-cachet-save").addEventListener("click", async () =>
       filename,
       annee: f.date ? f.date.slice(0, 4) : String(new Date().getFullYear()),
       date: f.date, projet: f.projet, studio: f.studio, employe: f.employe,
-      da: f.da, role: f.role, lignes: f.lignes, brut: f.brut, net: f.net,
+      da: f.da, role: f.role, lignes: f.lignes,
+      brut: toComma(f.brut), net: toComma(f.net), // virgule décimale → € dans la feuille
       pdfBase64,
     };
     await fetch(url, {
@@ -620,15 +768,8 @@ document.getElementById("btn-cachet-save").addEventListener("click", async () =>
       headers: { "Content-Type": "text/plain;charset=utf-8" },
       body: JSON.stringify(payload),
     });
-    if (cachetIndex < total - 1) {
-      startCachetContract(cachetIndex + 1); // contrat suivant du lot
-    } else {
-      alert(`Envoyé ✅ ${total > 1 ? total + " cachets rangés" : "Cachet rangé"} dans Drive + feuille.\n(Si rien n'apparaît, re-règle l'URL via ⚙️ Connecteur Google.)`);
-      clearPages();
-      pendingPdf = null;
-      exportBtn.textContent = EXPORT_LABEL;
-      showScreen("screen-home");
-    }
+    if (c.pages && c.pages[0]) sentFirstPages.add(c.pages[0]); // marque ce contrat comme envoyé
+    startCachetContract(cachetIndex + 1); // contrat suivant (ou fin du lot)
   } catch (e) {
     console.error(e);
     alert("Échec de l'envoi. Vérifie l'URL du connecteur (⚙️ Connecteur Google).");
