@@ -811,18 +811,6 @@ button.upload-link:disabled {
   color: var(--muted);
   font-size: 13px;
 }
-.ct-card__merge {
-  margin-left: auto;
-  border: 1px solid #e0e0e0;
-  background: #f5f5f5;
-  color: var(--ink);
-  font-size: 12px;
-  font-weight: 600;
-  border-radius: 999px;
-  padding: 5px 10px;
-  cursor: pointer;
-  touch-action: manipulation;
-}
 .ct-card__pages {
   display: flex;
   flex-wrap: wrap;
@@ -831,6 +819,12 @@ button.upload-link:disabled {
 .ct-thumb {
   position: relative;
   width: 64px;
+  /* le doigt sert à GLISSER la vignette, pas à faire défiler la page */
+  touch-action: none;
+  cursor: grab;
+}
+.ct-thumb--dragging {
+  opacity: 0.35;
 }
 .ct-thumb img {
   width: 64px;
@@ -852,27 +846,64 @@ button.upload-link:disabled {
   border-radius: 6px;
   padding: 1px 6px;
 }
-.ct-splits {
-  margin-top: 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.ct-split {
-  align-self: flex-start;
-  border: 1.5px solid var(--ink);
-  background: #fff;
-  color: var(--ink);
-  font-size: 13px;
-  font-weight: 600;
-  border-radius: 8px;
-  padding: 8px 12px;
+/* Pastille ✕ en haut à droite de chaque vignette : retirer la page */
+.ct-thumb__del {
+  position: absolute;
+  top: -7px;
+  right: -7px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2px solid #fff;
+  background: var(--ink);
+  color: #fff;
+  font-size: 11px;
+  line-height: 1;
+  display: grid;
+  place-items: center;
   cursor: pointer;
   touch-action: manipulation;
 }
-.ct-split:active,
-.ct-card__merge:active {
-  opacity: 0.6;
+.ct-thumb__del:active {
+  background: #c0392b;
+}
+
+/* Vignette "fantôme" qui suit le doigt pendant le glisser */
+.drag-ghost {
+  position: fixed;
+  width: 64px;
+  height: 84px;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 2px solid var(--accent);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  transform: translate(-50%, -60%) scale(1.08);
+  pointer-events: none;
+  z-index: 80;
+}
+
+/* Carte survolée pendant le glisser : prête à recevoir la page */
+.ct-card--target {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
+/* Carré "Nouveau contrat" : zone de dépôt pour séparer un contrat */
+.ct-new-zone {
+  border: 2px dashed #c9c9c9;
+  border-radius: 14px;
+  padding: 22px 14px;
+  margin-bottom: 14px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+.ct-new-zone.ct-card--target {
+  border-color: var(--accent);
+  color: var(--accent);
+  box-shadow: none;
+  background: rgba(37, 99, 235, 0.06);
 }
 
 /* Écran fiche cachet : colonne étroite et centrée

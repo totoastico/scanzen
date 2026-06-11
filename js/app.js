@@ -740,7 +740,8 @@ document.getElementById("btn-viewer-close").addEventListener("click", closeViewe
 // après l'autre (1 PDF + 1 ligne chacun).
 
 let pageTexts = [];        // texte OCR de chaque page (même ordre que cachetPages)
-let splitFlags = [];       // splitFlags[i] = true → la page i démarre un contrat
+let cachetItems = [];      // [{ url, text, n }] — une entrée par page du lot
+let cachetGroups = [];     // [[item, …], …] — un tableau de pages par contrat
 let cachetContracts = [];  // [{ pages:[dataURL], text }]
 let cachetIndex = 0;       // contrat en cours de saisie
 
@@ -778,25 +779,28 @@ async function ocrAllPages() {
   return !cancelled;
 }
 
-// Devine où commence chaque contrat (la 1re page est toujours un début).
-function computeSplitFlags() {
-  splitFlags = cachetPages.map((_, i) => (i === 0 ? true : isContractStart(pageTexts[i] || "")));
+// Propose un découpage initial : une page qui "ressemble à un début de
+// contrat" ouvre un nouveau groupe, les autres suivent la précédente.
+// L'utilisateur réarrange ensuite librement (glisser-déposer, ✕).
+function buildInitialGroups() {
+  cachetItems = cachetPages.map((url, i) => ({
+    url,
+    text: pageTexts[i] || "",
+    n: i + 1, // numéro de page d'origine (affiché sur la vignette)
+  }));
+  cachetGroups = [];
+  cachetItems.forEach((item, i) => {
+    if (i === 0 || isContractStart(item.text)) cachetGroups.push([item]);
+    else cachetGroups[cachetGroups.length - 1].push(item);
+  });
 }
 
-// Regroupe les pages en contrats selon le découpage.
+// Transforme les groupes en contrats prêts à traiter.
 function buildContracts() {
-  const pages = cachetPages;
-  const out = [];
-  pages.forEach((url, i) => {
-    if (splitFlags[i] || out.length === 0) {
-      out.push({ pages: [url], texts: [pageTexts[i] || ""] });
-    } else {
-      const c = out[out.length - 1];
-      c.pages.push(url);
-      c.texts.push(pageTexts[i] || "");
-    }
-  });
-  return out.map((c) => ({ pages: c.pages, text: c.texts.join("\n") }));
+  return cachetGroups.map((g) => ({
+    pages: g.map((it) => it.url),
+    text: g.map((it) => it.text).join("\n"),
+  }));
 }
 
 // Lance le parcours cachet sur un lot d'images : OCR → découpage (ou
@@ -821,7 +825,7 @@ async function startCachetFlow(images) {
     else showScreen(cachetReturnScreen);
     return;
   }
-  computeSplitFlags();
+  buildInitialGroups();
   if (cachetPages.length <= 1) {
     cachetContracts = buildContracts();
     startCachetContract(0);
@@ -839,30 +843,23 @@ cachetBtn.addEventListener("click", async () => {
   await startCachetFlow(getPages());
 });
 
-// Dessine l'écran de découpage : une CARTE par contrat détecté, avec ses
-// pages en vignettes. Boutons clairs pour fusionner / séparer.
+// Dessine l'écran de découpage : une CARTE par contrat, avec ses pages en
+// vignettes. On GLISSE une page d'une carte à l'autre (ou vers le carré
+// "Nouveau contrat") pour réorganiser ; la pastille ✕ retire une page.
 function renderSplit() {
-  const pages = cachetPages;
   splitListEl.innerHTML = "";
-  // Après un premier envoi, on FIGE le découpage : re-couper/fusionner
-  // mélangerait des contrats déjà rangés dans Drive avec d'autres.
+  // Après un premier envoi, on FIGE le découpage : réorganiser mélangerait
+  // des contrats déjà rangés dans Drive avec d'autres.
   const locked = sentLog.length > 0;
 
-  // Construire les groupes (contrats) à partir de splitFlags.
-  const groups = [];
-  pages.forEach((url, i) => {
-    if (splitFlags[i] || groups.length === 0) groups.push([i]);
-    else groups[groups.length - 1].push(i);
-  });
-
-  groups.forEach((idxs, gi) => {
+  cachetGroups.forEach((group, gi) => {
     const card = document.createElement("div");
     card.className = "ct-card";
-    const firstPage = pages[idxs[0]];
-    const isSent = sentFirstPages.has(firstPage);
-    const isSkipped = skippedFirstPages.has(firstPage);
+    card.dataset.gi = String(gi); // index du groupe → cible de dépôt
+    const isSent = sentFirstPages.has(group[0].url);
+    const isSkipped = skippedFirstPages.has(group[0].url);
 
-    // En-tête : numéro + "Contrat N" + nb de pages (+ fusionner si pas le 1er)
+    // En-tête : numéro + "Contrat N" + nb de pages / statut
     const head = document.createElement("div");
     head.className = "ct-card__head";
     const badge = document.createElement("span");
@@ -877,61 +874,156 @@ function renderSplit() {
       ? "· ✓ envoyé"
       : isSkipped
         ? "· ignoré"
-        : "· " + idxs.length + (idxs.length > 1 ? " pages" : " page");
+        : "· " + group.length + (group.length > 1 ? " pages" : " page");
     head.append(badge, title, meta);
-    if (gi > 0 && !locked) {
-      const merge = document.createElement("button");
-      merge.type = "button";
-      merge.className = "ct-card__merge";
-      merge.textContent = "↑ Fusionner";
-      merge.addEventListener("click", () => {
-        splitFlags[idxs[0]] = false;
-        renderSplit();
-      });
-      head.appendChild(merge);
-    }
     card.appendChild(head);
 
     // Vignettes des pages du contrat
     const pagesRow = document.createElement("div");
     pagesRow.className = "ct-card__pages";
-    idxs.forEach((i) => {
-      const cell = document.createElement("div");
-      cell.className = "ct-thumb";
-      const img = document.createElement("img");
-      img.src = pages[i];
-      img.alt = "Page " + (i + 1);
-      const n = document.createElement("span");
-      n.className = "ct-thumb__n";
-      n.textContent = String(i + 1);
-      cell.append(img, n);
-      pagesRow.appendChild(cell);
-    });
+    group.forEach((item) => pagesRow.appendChild(makeSplitThumb(item, locked)));
     card.appendChild(pagesRow);
-
-    // Si le contrat a plusieurs pages : proposer de le couper (sauf figé).
-    if (idxs.length > 1 && !locked) {
-      const splits = document.createElement("div");
-      splits.className = "ct-splits";
-      idxs.slice(1).forEach((i) => {
-        const b = document.createElement("button");
-        b.type = "button";
-        b.className = "ct-split";
-        b.textContent = "✂ Couper : nouveau contrat dès la page " + (i + 1);
-        b.addEventListener("click", () => {
-          splitFlags[i] = true;
-          renderSplit();
-        });
-        splits.appendChild(b);
-      });
-      card.appendChild(splits);
-    }
 
     splitListEl.appendChild(card);
   });
 
-  const n = groups.length;
+  // Carré "Nouveau contrat" : on y dépose une page pour séparer un contrat.
+  if (!locked && cachetGroups.length > 0) {
+    const zone = document.createElement("div");
+    zone.className = "ct-new-zone";
+    zone.id = "ct-new-zone";
+    zone.textContent = "➕ Nouveau contrat — dépose une page ici";
+    splitListEl.appendChild(zone);
+  }
+
+  const n = cachetGroups.length;
   splitCountEl.textContent = n + (n <= 1 ? " contrat" : " contrats");
+  document.getElementById("btn-split-confirm").disabled = n === 0;
+}
+
+// Fabrique la vignette d'une page : numéro, pastille ✕, et glisser-déposer.
+function makeSplitThumb(item, locked) {
+  const cell = document.createElement("div");
+  cell.className = "ct-thumb";
+  const img = document.createElement("img");
+  img.src = item.url;
+  img.alt = "Page " + item.n;
+  img.draggable = false; // on gère le glisser nous-mêmes (tactile compris)
+  const n = document.createElement("span");
+  n.className = "ct-thumb__n";
+  n.textContent = String(item.n);
+  cell.append(img, n);
+  if (!locked) {
+    const del = document.createElement("button");
+    del.type = "button";
+    del.className = "ct-thumb__del";
+    del.setAttribute("aria-label", "Retirer cette page");
+    del.textContent = "✕";
+    del.addEventListener("pointerdown", (e) => e.stopPropagation());
+    del.addEventListener("click", () => removeSplitItem(item));
+    cell.appendChild(del);
+    cell.addEventListener("pointerdown", (e) => startThumbDrag(e, item, cell));
+  }
+  return cell;
+}
+
+// Retire une page du lot (elle ne sera ni envoyée, ni dans le PDF).
+function removeSplitItem(item) {
+  for (const g of cachetGroups) {
+    const i = g.indexOf(item);
+    if (i !== -1) {
+      g.splice(i, 1);
+      break;
+    }
+  }
+  cachetGroups = cachetGroups.filter((g) => g.length > 0); // groupes vides → supprimés
+  renderSplit();
+  showToast(`Page ${item.n} retirée`);
+}
+
+// --- Glisser-déposer d'une vignette vers une autre carte ---
+let thumbDrag = null; // { item, cell, ghost, target, startX, startY }
+
+function startThumbDrag(e, item, cell) {
+  e.preventDefault();
+  try {
+    cell.setPointerCapture(e.pointerId);
+  } catch (_) {} // pointeur synthétique (tests) : pas grave
+  thumbDrag = { item, cell, ghost: null, target: null, startX: e.clientX, startY: e.clientY };
+  const onMove = (ev) => thumbDragMove(ev);
+  const onUp = (ev) => {
+    cell.removeEventListener("pointermove", onMove);
+    cell.removeEventListener("pointerup", onUp);
+    cell.removeEventListener("pointercancel", onUp);
+    thumbDragEnd(ev);
+  };
+  cell.addEventListener("pointermove", onMove);
+  cell.addEventListener("pointerup", onUp);
+  cell.addEventListener("pointercancel", onUp);
+}
+
+function thumbDragMove(e) {
+  if (!thumbDrag) return;
+  // On ne "soulève" la vignette qu'après un petit déplacement (sinon un
+  // simple appui la ferait bouger).
+  if (!thumbDrag.ghost) {
+    if (Math.hypot(e.clientX - thumbDrag.startX, e.clientY - thumbDrag.startY) < 8) return;
+    const ghost = document.createElement("img");
+    ghost.src = thumbDrag.item.url;
+    ghost.className = "drag-ghost";
+    document.body.appendChild(ghost);
+    thumbDrag.ghost = ghost;
+    thumbDrag.cell.classList.add("ct-thumb--dragging");
+  }
+  thumbDrag.ghost.style.left = e.clientX + "px";
+  thumbDrag.ghost.style.top = e.clientY + "px";
+
+  // Près du bord haut/bas ? On fait défiler la liste pour atteindre les
+  // cartes hors écran.
+  if (e.clientY > window.innerHeight - 80) splitListEl.scrollTop += 14;
+  else if (e.clientY < 140) splitListEl.scrollTop -= 14;
+
+  // Quelle carte est sous le doigt ? (le fantôme est insensible aux clics)
+  const under = document.elementFromPoint(e.clientX, e.clientY);
+  const target = under ? under.closest(".ct-card, .ct-new-zone") : null;
+  if (thumbDrag.target && thumbDrag.target !== target) {
+    thumbDrag.target.classList.remove("ct-card--target");
+  }
+  thumbDrag.target = target;
+  if (target) target.classList.add("ct-card--target");
+}
+
+function thumbDragEnd() {
+  if (!thumbDrag) return;
+  const { item, cell, ghost, target } = thumbDrag;
+  thumbDrag = null;
+  if (ghost) ghost.remove();
+  cell.classList.remove("ct-thumb--dragging");
+  if (!ghost || !target) return; // simple appui ou lâché dans le vide
+  target.classList.remove("ct-card--target");
+
+  // Retire la page de son groupe d'origine…
+  let from = -1;
+  for (let g = 0; g < cachetGroups.length; g++) {
+    const i = cachetGroups[g].indexOf(item);
+    if (i !== -1) {
+      from = g;
+      cachetGroups[g].splice(i, 1);
+      break;
+    }
+  }
+  if (from === -1) return;
+
+  // …et dépose-la sur la cible.
+  if (target.id === "ct-new-zone") {
+    cachetGroups.push([item]);
+  } else {
+    const gi = Number(target.dataset.gi);
+    if (Number.isInteger(gi) && cachetGroups[gi]) cachetGroups[gi].push(item);
+    else cachetGroups[from].splice(0, 0, item); // cible disparue → on remet
+  }
+  cachetGroups = cachetGroups.filter((g) => g.length > 0);
+  renderSplit();
 }
 
 // Quitte le parcours cachet (avec confirmation si des contrats non
@@ -949,7 +1041,8 @@ function leaveCachetFlow() {
   }
   cachetPages = [];
   cachetContracts = [];
-  splitFlags = [];
+  cachetItems = [];
+  cachetGroups = [];
   cameraMode = "scan";
   if (sentLog.length > 0) {
     // Quelque chose a bien été envoyé → récapitulatif plutôt que silence.
