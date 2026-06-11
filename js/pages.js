@@ -13,6 +13,7 @@ const pages = [];
 const listEl = document.getElementById("pages-list");
 const countEl = document.getElementById("pages-count");
 const exportBtn = document.getElementById("btn-export");
+const cachetShortcut = document.getElementById("btn-cachet");
 
 // --- Fonctions utilisées par app.js ---
 
@@ -43,6 +44,8 @@ export function clearPages() {
 function removePage(index) {
   pages.splice(index, 1);
   render();
+  // Prévient app.js : un PDF déjà préparé ne correspond plus à la liste.
+  document.dispatchEvent(new CustomEvent("pages-changed"));
 }
 
 // Déplace une page d'un cran (direction = -1 pour monter, +1 pour descendre).
@@ -51,6 +54,7 @@ function movePage(index, direction) {
   if (target < 0 || target >= pages.length) return;
   [pages[index], pages[target]] = [pages[target], pages[index]];
   render();
+  document.dispatchEvent(new CustomEvent("pages-changed"));
 }
 
 function makeButton(label, className, onClick, disabled) {
@@ -68,6 +72,7 @@ function render() {
   const n = pages.length;
   countEl.textContent = n <= 1 ? n + " page" : n + " pages";
   exportBtn.disabled = n === 0; // pas de pages → pas d'export possible
+  cachetShortcut.disabled = n === 0; // idem pour le raccourci cachet
 
   listEl.innerHTML = "";
 

@@ -130,24 +130,3 @@ export function buildFilename(f) {
   return `${ym}_${slug(f.studio)}_${third}`;
 }
 
-// Ligne pour la feuille (colonnes séparées par des tabulations).
-// Date ajout · Fichier · Lien PDF · Année · Date réalisation · Projet ·
-// Studio · Employé · DA · Rôle · Nb lignes · Brut · Net.
-export function buildRow(f, filename) {
-  const today = new Date().toISOString().slice(0, 10);
-  return [
-    today,
-    filename,
-    "",
-    f.date ? f.date.slice(0, 4) : "",
-    f.date || "",
-    f.projet || "",
-    f.studio || "",
-    f.employe || "",
-    f.da || "",
-    f.role || "ND",
-    f.lignes || "",
-    f.brut || "",
-    f.net || "",
-  ].join("\t");
-}

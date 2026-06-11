@@ -21,16 +21,21 @@ const state = {
   filteredImage: null, // rognage + rotation + filtre (ce qui sera ajouté)
   activeFilter: "auto", // mode de filtre courant
   rotation: 0, // rotation appliquée au résultat (0, 90, 180, 270)
+  fromImport: false, // la page affichée vient d'un téléversement (pas de la caméra)
 };
 
 let pendingPdf = null; // PDF préparé, en attente d'un appui pour le partager
+let pdfGeneration = 0; // change à chaque modif de la liste → invalide un PDF en cours
 const EXPORT_LABEL = "Exporter en PDF";
 
-// --- Mode de la caméra / parcours ---
+// --- Mode de la caméra / parcours cachet ---
 let cameraMode = "scan";                  // "scan" (Scanner) ou "cachet" (Contrat)
 let cachetPages = [];                     // images du lot cachet en cours (≠ pages scan)
 let cachetReturnScreen = "screen-home";   // où revenir depuis le découpage
 let sentFirstPages = new Set();           // contrats déjà envoyés (clé = 1re page) → anti-doublon
+let skippedFirstPages = new Set();        // contrats ignorés volontairement
+let sentLog = [];                         // contrats réellement envoyés : [{ filename }]
+let batchConfirmed = true;                // tous les envois du lot confirmés par Google ?
 
 // Pour Google Sheets en français : la virgule décimale fait reconnaître le
 // nombre (et afficher le €), contrairement au point.
@@ -44,23 +49,60 @@ const previewImage = document.getElementById("preview-image");
 const resultImage = document.getElementById("result-image");
 const filterButtons = document.querySelectorAll(".filter-btn");
 const exportBtn = document.getElementById("btn-export");
+const resultRetakeBtn = document.getElementById("btn-result-retake");
+
+// ===================================================================
+// Navigation, voile "occupé", toast, fil d'étapes
+// ===================================================================
 
 // --- Navigation entre écrans : un seul visible à la fois ---
 const screens = document.querySelectorAll(".screen");
 function showScreen(id) {
   screens.forEach((screen) => screen.classList.remove("screen--active"));
   document.getElementById(id).classList.add("screen--active");
+  if (id !== "screen-home") trapBack(); // bouton retour du téléphone (voir plus bas)
 }
 
-// --- Petit voile "occupé" (lecture d'un PDF, etc.) ---
+// --- Petit voile "occupé" (lecture d'un PDF, OCR…), annulable au besoin ---
 const busy = document.getElementById("busy");
 const busyText = document.getElementById("busy-text");
-function showBusy(msg) {
+const busyCancel = document.getElementById("busy-cancel");
+let busyOnCancel = null;
+function showBusy(msg, onCancel) {
   busyText.textContent = msg;
+  if (onCancel !== undefined) busyOnCancel = onCancel; // garde le callback pendant une boucle
+  busyCancel.hidden = !busyOnCancel;
   busy.hidden = false;
 }
 function hideBusy() {
   busy.hidden = true;
+  busyOnCancel = null;
+}
+busyCancel.addEventListener("click", () => {
+  if (busyOnCancel) busyOnCancel();
+});
+
+// --- Toast : message furtif non bloquant (remplace les alert() de succès) ---
+const toastEl = document.getElementById("toast");
+let toastTimer = null;
+function showToast(msg, ms = 3000) {
+  toastEl.textContent = msg;
+  toastEl.classList.add("toast--on");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toastEl.classList.remove("toast--on"), ms);
+}
+
+// --- Fil d'étapes du parcours cachet (copié sur chaque écran concerné) ---
+const STEP_ORDER = ["pages", "decoupage", "fiches", "envoi"];
+function setStep(current) {
+  const idx = STEP_ORDER.indexOf(current);
+  document.querySelectorAll(".steps .step").forEach((el) => {
+    const i = STEP_ORDER.indexOf(el.dataset.step);
+    el.classList.toggle("step--done", i < idx);
+    el.classList.toggle("step--current", i === idx);
+    if (i === idx) el.setAttribute("aria-current", "step");
+    else el.removeAttribute("aria-current");
+  });
 }
 
 // Renvoie un canvas pivoté de `deg` degrés (90/180/270).
@@ -76,15 +118,39 @@ function rotateCanvas(canvas, deg) {
   return out;
 }
 
-// En mode cachet, affiche le bouton "Terminer (N)" sur la caméra.
+// ===================================================================
+// Caméra (modes scan et cachet)
+// ===================================================================
+
+// En mode cachet : bouton "Terminer (N)", consigne et vignettes des pages.
 function updateCameraDone() {
   const done = document.getElementById("btn-camera-done");
   if (cameraMode === "cachet") {
     done.hidden = false;
+    done.disabled = cachetPages.length === 0;
     done.textContent = `Terminer (${cachetPages.length})`;
   } else {
     done.hidden = true;
   }
+  document.getElementById("camera-hint").hidden =
+    !(cameraMode === "cachet" && cachetPages.length === 0);
+  updateCachetStrip();
+}
+
+// Reconstruit la bande de vignettes des pages déjà prises (mode cachet).
+const cameraStrip = document.getElementById("camera-strip");
+function updateCachetStrip() {
+  const show = cameraMode === "cachet" && cachetPages.length > 0;
+  cameraStrip.hidden = !show;
+  cameraStrip.innerHTML = "";
+  if (!show) return;
+  cachetPages.forEach((url, i) => {
+    const img = document.createElement("img");
+    img.src = url;
+    img.alt = "Page " + (i + 1);
+    cameraStrip.appendChild(img);
+  });
+  cameraStrip.scrollLeft = cameraStrip.scrollWidth; // la dernière prise reste visible
 }
 
 // --- Ouvrir la caméra (Scanner, Cachet, "Reprendre" ou "Ajouter une page") ---
@@ -133,6 +199,9 @@ function describeCameraError(err) {
 // --- Écran résultat : applique rotation + filtre au rognage ---
 function showResult() {
   setFilter(state.activeFilter || "auto");
+  // Pour un fichier téléversé, "Reprendre" (la caméra) n'a pas de sens :
+  // on propose plutôt d'ignorer la page.
+  resultRetakeBtn.textContent = state.fromImport ? "Ignorer cette page" : "Reprendre";
   showScreen("screen-result");
 }
 
@@ -210,12 +279,15 @@ async function startNextImport() {
     state.croppedCanvas = await imageToCanvas(img);
   } catch (e) {
     console.error(e);
-    alert("Ce fichier n'a pas pu être ouvert.");
+    showToast("Un fichier n'a pas pu être ouvert.", 4000);
     if (importQueue.length) startNextImport();
+    // fin du lot sur un échec : ne pas rester sur un écran résultat périmé
+    else showScreen(pageCount() > 0 ? "screen-pages" : "screen-home");
     return;
   }
   state.rotation = 0;
   state.activeFilter = "original"; // déjà scanné → on n'altère rien par défaut
+  state.fromImport = true;
   showResult();
 }
 
@@ -233,7 +305,7 @@ async function filesToImages(files) {
     } else if (file.type.startsWith("image/")) {
       images.push(await readFileAsDataURL(file));
     } else {
-      alert(`« ${file.name} » n'est ni une image ni un PDF.\nPour un fichier Word, enregistre-le d'abord en PDF.`);
+      showToast(`« ${file.name} » n'est ni une image ni un PDF.`, 4500);
     }
   }
   return images;
@@ -253,7 +325,7 @@ document.getElementById("file-input").addEventListener("change", async (e) => {
   } catch (err) {
     hideBusy();
     console.error(err);
-    alert("Impossible de lire ce fichier. " + (err.message || ""));
+    showToast("Impossible de lire ce fichier. " + (err.message || ""), 4500);
     return;
   }
   startNextImport();
@@ -274,12 +346,14 @@ document.getElementById("cachet-file-input").addEventListener("change", async (e
   } catch (err) {
     hideBusy();
     console.error(err);
-    alert("Impossible de lire ce fichier. " + (err.message || ""));
+    showToast("Impossible de lire ce fichier. " + (err.message || ""), 4500);
   }
 });
 
 document.getElementById("btn-close-camera").addEventListener("click", closeCamera);
 document.getElementById("btn-camera-back").addEventListener("click", closeCamera);
+// Échec de chargement du moteur de détection → retour caméra (pas de cul-de-sac)
+document.getElementById("btn-crop-loading-back").addEventListener("click", openCamera);
 
 // Caméra → capturer.
 //  - mode scan  : aperçu → recadrage → filtre → liste.
@@ -289,11 +363,17 @@ document.getElementById("btn-capture").addEventListener("click", () => {
   const img = capturePhoto(video);
   if (cameraMode === "cachet") {
     cachetPages.push(img);
+    // petit éclair blanc : confirme visuellement la prise
+    const flash = document.getElementById("camera-flash");
+    flash.classList.remove("is-on");
+    void flash.offsetWidth; // relance l'animation
+    flash.classList.add("is-on");
     updateCameraDone();
     return;
   }
   state.capturedImage = img;
   state.activeFilter = "auto"; // photo → filtre "Auto" par défaut (≠ téléversement)
+  state.fromImport = false;
   previewImage.src = img;
   stopCamera(video);
   showScreen("screen-preview");
@@ -319,7 +399,7 @@ document.getElementById("btn-use").addEventListener("click", async () => {
 // Recadrage → "Reprendre"
 document.getElementById("btn-crop-back").addEventListener("click", openCamera);
 
-// Recadrage → "Redresser"
+// Recadrage → "Valider"
 document.getElementById("btn-crop-confirm").addEventListener("click", () => {
   try {
     state.croppedCanvas = cropToCanvas();
@@ -327,7 +407,7 @@ document.getElementById("btn-crop-confirm").addEventListener("click", () => {
     showResult();
   } catch (e) {
     console.error(e);
-    alert("Le redressement a échoué. Essaie de réajuster les coins.");
+    showToast("Le redressement a échoué. Essaie de réajuster les coins.", 4500);
   }
 });
 
@@ -338,14 +418,33 @@ filterButtons.forEach((b) =>
 document.getElementById("btn-rotate-left").addEventListener("click", () => rotate(-90));
 document.getElementById("btn-rotate-right").addEventListener("click", () => rotate(90));
 
-// Résultat → "Reprendre"
-document.getElementById("btn-result-retake").addEventListener("click", openCamera);
+// Résultat → "Reprendre" (photo) ou "Ignorer cette page" (téléversement)
+resultRetakeBtn.addEventListener("click", () => {
+  if (state.fromImport) {
+    if (importQueue.length) {
+      startNextImport(); // page suivante du lot téléversé
+      return;
+    }
+    showScreen(pageCount() > 0 ? "screen-pages" : "screen-home");
+    return;
+  }
+  openCamera();
+});
+
+// Le contenu de la liste a changé → l'éventuel PDF préparé n'est plus valable.
+function invalidatePendingPdf() {
+  pendingPdf = null;
+  pdfGeneration++;
+  exportBtn.textContent = EXPORT_LABEL;
+  exportBtn.classList.remove("btn-primary--ready");
+}
+// Suppressions / réordonnancements faits dans pages.js
+document.addEventListener("pages-changed", invalidatePendingPdf);
 
 // Résultat → "Ajouter" : ajoute la page à la liste
 document.getElementById("btn-add-to-list").addEventListener("click", () => {
   addPage(state.filteredImage);
-  pendingPdf = null; // le contenu a changé → l'éventuel PDF préparé n'est plus valable
-  exportBtn.textContent = EXPORT_LABEL;
+  invalidatePendingPdf();
   if (importQueue.length) startNextImport(); // continuer le lot téléversé
   else showScreen("screen-pages");
 });
@@ -356,11 +455,29 @@ document.getElementById("btn-add-page").addEventListener("click", () => {
   openCamera();
 });
 
+// ===================================================================
+// Export PDF (parcours scan)
+// ===================================================================
+
+// La préférence OCR est mémorisée sur l'appareil.
+const ocrToggle = document.getElementById("ocr-toggle");
+ocrToggle.checked = localStorage.getItem("scanzen_ocr") !== "0";
+ocrToggle.addEventListener("change", () => {
+  localStorage.setItem("scanzen_ocr", ocrToggle.checked ? "1" : "0");
+});
+
+// Pendant la fabrication du PDF : on grise le reste de l'écran pour
+// éviter les actions concurrentes (ajout de page, OCR relancé…).
+function lockPagesScreen(on) {
+  document.getElementById("screen-pages").classList.toggle("pages--locked", on);
+}
+
 // Après un export réussi : on vide la liste (le scan est terminé) et on
 // revient à l'accueil.
 function finishExport() {
   pendingPdf = null;
   exportBtn.textContent = EXPORT_LABEL;
+  exportBtn.classList.remove("btn-primary--ready");
   clearPages();
   showScreen("screen-home");
 }
@@ -376,9 +493,11 @@ exportBtn.addEventListener("click", async () => {
 
   const pages = getPages();
   if (pages.length === 0) return;
-  const ocr = document.getElementById("ocr-toggle").checked;
+  const ocr = ocrToggle.checked;
+  const gen = pdfGeneration; // pour détecter une modif de la liste pendant l'OCR
 
   exportBtn.disabled = true;
+  lockPagesScreen(true);
   exportBtn.textContent = ocr ? "OCR en cours…" : "Création du PDF…";
   try {
     const blob = await buildPdf(pages, {
@@ -387,11 +506,16 @@ exportBtn.addEventListener("click", async () => {
         exportBtn.textContent = `OCR ${i + 1}/${total} — ${Math.round((p || 0) * 100)}%`;
       },
     });
-    if (ocr) {
+    if (ocr && gen !== pdfGeneration) {
+      // La liste a changé pendant la fabrication : ce PDF est périmé.
+      exportBtn.textContent = EXPORT_LABEL;
+    } else if (ocr) {
       // L'OCR peut durer longtemps → l'autorisation de partage a expiré.
       // On garde le PDF et on attend un nouvel appui pour le partager.
       pendingPdf = blob;
       exportBtn.textContent = "📄 Partager le PDF";
+      exportBtn.classList.add("btn-primary--ready");
+      showToast("PDF prêt — appuie sur « Partager le PDF »", 4000);
     } else {
       exportBtn.textContent = EXPORT_LABEL;
       const delivered = await sharePdf(blob);
@@ -399,10 +523,11 @@ exportBtn.addEventListener("click", async () => {
     }
   } catch (e) {
     console.error(e);
-    alert("La création du PDF a échoué. Réessaie.");
+    showToast("La création du PDF a échoué. Réessaie.", 4500);
     exportBtn.textContent = EXPORT_LABEL;
   } finally {
     exportBtn.disabled = false;
+    lockPagesScreen(false);
   }
 });
 
@@ -422,6 +547,7 @@ const F = {
 };
 const fFilename = document.getElementById("f-filename");
 const cachetBtn = document.getElementById("btn-cachet");
+const cachetError = document.getElementById("cachet-error");
 
 function currentFields() {
   return {
@@ -440,42 +566,127 @@ function currentFields() {
 function refreshFilename() {
   fFilename.textContent = buildFilename(currentFields()) + ".pdf";
 }
-[F.date, F.studio, F.da].forEach((el) => el.addEventListener("input", refreshFilename));
+// le projet sert de 3e segment du nom quand il n'y a pas de DA
+[F.date, F.studio, F.da, F.projet].forEach((el) =>
+  el.addEventListener("input", refreshFilename)
+);
+
+// --- Montants : on accepte la virgule (clavier français) ET le point ---
+function parseMoney(v) {
+  const n = parseFloat(String(v || "").replace(/\s/g, "").replace(",", "."));
+  return isFinite(n) ? n : NaN;
+}
+function formatMoney(n) {
+  return n.toFixed(2).replace(".", ",");
+}
 
 // Montant net = estimation depuis le brut (≈ 78 %), sauf si saisi à la main.
+// Le style italique/gris signale "estimé, pas lu sur le contrat".
 const NET_PCT = 0.78; // à ajuster selon tes bulletins de paie (net ÷ brut)
 let netManual = false;
 function computeNet() {
   if (netManual) return;
-  const brut = parseFloat((F.brut.value || "").replace(",", "."));
-  F.net.value = isFinite(brut) ? Math.round(brut * NET_PCT * 100) / 100 : "";
+  const brut = parseMoney(F.brut.value);
+  F.net.value = isNaN(brut) ? "" : formatMoney(brut * NET_PCT);
+  F.net.classList.toggle("input--est", F.net.value !== "");
 }
 F.brut.addEventListener("input", computeNet);
-F.net.addEventListener("input", () => { netManual = true; });
+F.net.addEventListener("input", () => {
+  netManual = true;
+  F.net.classList.remove("input--est");
+});
+
+// --- L'employé "suit" le studio tant qu'on ne l'a pas modifié à la main
+//     (même principe que netManual pour le montant net). ---
+let employeFollows = true;
+F.studio.addEventListener("input", () => {
+  if (employeFollows) F.employe.value = F.studio.value;
+});
+F.employe.addEventListener("input", () => {
+  employeFollows = false;
+});
+document.getElementById("btn-copy-studio").addEventListener("click", (e) => {
+  e.preventDefault(); // bouton dans un <label> : ne pas voler le focus
+  F.employe.value = F.studio.value;
+  employeFollows = true;
+});
+
+// --- Entrée / "Suivant" du clavier = passer au champ suivant ---
+const fieldOrder = [F.studio, F.employe, F.projet, F.da, F.role, F.date, F.lignes, F.brut, F.net];
+fieldOrder.forEach((el, i) => {
+  el.setAttribute("enterkeyhint", i < fieldOrder.length - 1 ? "next" : "done");
+  el.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && fieldOrder[i + 1]) {
+      e.preventDefault();
+      fieldOrder[i + 1].focus();
+    }
+  });
+});
 
 function fillForm(f) {
   netManual = false;
+  employeFollows = !f.employe || f.employe === f.studio;
   F.projet.value = f.projet || "";
   F.studio.value = f.studio || "";
   F.employe.value = f.employe || "";
   F.da.value = f.da || "";
   F.date.value = f.date || "";
   F.lignes.value = f.lignes || "";
-  F.brut.value = f.brut || "";
-  F.net.value = f.net || "";
+  F.brut.value = toComma(f.brut || "");
+  F.net.value = toComma(f.net || "");
+  F.net.classList.remove("input--est");
   if (!F.net.value) computeNet(); // estime le net si absent
   F.role.value = f.role || "ND";
   refreshFilename();
 }
 
+// --- Vignettes du contrat en cours + visionneuse plein écran ---
+const stripEl = document.getElementById("contract-strip");
+const viewerEl = document.getElementById("viewer");
+const viewerScroll = document.getElementById("viewer-scroll");
+
+function renderContractStrip(c) {
+  stripEl.innerHTML = "";
+  const pages = (c && c.pages) || [];
+  stripEl.hidden = pages.length === 0;
+  pages.forEach((url, i) => {
+    const img = document.createElement("img");
+    img.src = url;
+    img.alt = "Page " + (i + 1);
+    img.addEventListener("click", () => openViewer(pages, i));
+    stripEl.appendChild(img);
+  });
+}
+
+function openViewer(pages, start) {
+  viewerScroll.innerHTML = "";
+  pages.forEach((url) => {
+    const img = document.createElement("img");
+    img.src = url;
+    // taper sur l'image = zoom ×2,2 (on fait défiler pour se déplacer)
+    img.addEventListener("click", () => viewerEl.classList.toggle("viewer--zoom"));
+    viewerScroll.appendChild(img);
+  });
+  viewerEl.hidden = false;
+  requestAnimationFrame(() => {
+    const target = viewerScroll.children[start];
+    if (target) target.scrollIntoView();
+  });
+}
+function closeViewer() {
+  viewerEl.hidden = true;
+  viewerEl.classList.remove("viewer--zoom");
+}
+document.getElementById("btn-viewer-close").addEventListener("click", closeViewer);
+
 // ===================================================================
 // Découpage intelligent : 1 lot de pages → 1 ou plusieurs contrats
 // ===================================================================
-// Après "Fiche cachet" : on OCRise chaque page, on PROPOSE un découpage
-// (1 contrat = 1 ou plusieurs pages), tu ajustes, puis on traite chaque
-// contrat l'un après l'autre (1 PDF + 1 ligne chacun).
+// On OCRise chaque page, on PROPOSE un découpage (1 contrat = 1 ou
+// plusieurs pages), tu ajustes, puis on traite chaque contrat l'un
+// après l'autre (1 PDF + 1 ligne chacun).
 
-let pageTexts = [];        // texte OCR de chaque page (même ordre que getPages)
+let pageTexts = [];        // texte OCR de chaque page (même ordre que cachetPages)
 let splitFlags = [];       // splitFlags[i] = true → la page i démarre un contrat
 let cachetContracts = [];  // [{ pages:[dataURL], text }]
 let cachetIndex = 0;       // contrat en cours de saisie
@@ -483,16 +694,27 @@ let cachetIndex = 0;       // contrat en cours de saisie
 const splitListEl = document.getElementById("split-list");
 const splitCountEl = document.getElementById("split-count");
 
-// OCR de toutes les pages, avec voile de progression.
+// OCR de toutes les pages, avec voile de progression ANNULABLE.
+// Renvoie false si l'utilisateur a annulé.
 async function ocrAllPages() {
   const pages = cachetPages;
   pageTexts = [];
+  let cancelled = false;
+  showBusy("Analyse du texte…", () => {
+    cancelled = true;
+    showBusy("Annulation…", null); // null : cache aussi le bouton Annuler
+  });
   for (let i = 0; i < pages.length; i++) {
+    if (cancelled) break;
     showBusy(`Analyse du texte… page ${i + 1}/${pages.length}`);
     try {
-      const lines = await ocrPage(pages[i], (p) =>
-        showBusy(`Analyse du texte… page ${i + 1}/${pages.length} — ${Math.round((p || 0) * 100)}%`)
-      );
+      const lines = await ocrPage(pages[i], (p) => {
+        // la page en cours continue de tourner après "Annuler" : ne pas
+        // écraser le message "Annulation…"
+        if (!cancelled) {
+          showBusy(`Analyse du texte… page ${i + 1}/${pages.length} — ${Math.round((p || 0) * 100)}%`);
+        }
+      });
       pageTexts.push(lines.map((l) => l.text).join("\n"));
     } catch (e) {
       console.error(e);
@@ -500,6 +722,7 @@ async function ocrAllPages() {
     }
   }
   try { await terminateOcr(); } catch (e) { /* libère la mémoire OCR */ }
+  return !cancelled;
 }
 
 // Devine où commence chaque contrat (la 1re page est toujours un début).
@@ -528,11 +751,22 @@ function buildContracts() {
 async function startCachetFlow(images) {
   if (!images || !images.length) return;
   cachetPages = images;
-  sentFirstPages = new Set(); // nouveau lot → on repart de zéro pour l'anti-doublon
+  sentFirstPages = new Set(); // nouveau lot → on repart de zéro
+  skippedFirstPages = new Set();
+  sentLog = [];
+  batchConfirmed = true;
+  let ok;
   try {
-    await ocrAllPages();
+    ok = await ocrAllPages();
   } finally {
     hideBusy();
+  }
+  if (!ok) {
+    // Annulé : retour à la caméra cachet (les pages sont conservées) ou
+    // à l'écran d'origine.
+    if (cameraMode === "cachet") openCamera();
+    else showScreen(cachetReturnScreen);
+    return;
   }
   computeSplitFlags();
   if (cachetPages.length <= 1) {
@@ -540,12 +774,12 @@ async function startCachetFlow(images) {
     startCachetContract(0);
   } else {
     renderSplit();
+    setStep("decoupage");
     showScreen("screen-split");
   }
 }
 
-// Liste (parcours scan) → "Fiche cachet" : traite les pages scannées comme
-// un (ou plusieurs) contrat(s).
+// Liste (parcours scan) → "Classer ces pages en cachet".
 cachetBtn.addEventListener("click", async () => {
   if (pageCount() === 0) return;
   cachetReturnScreen = "screen-pages";
@@ -557,6 +791,9 @@ cachetBtn.addEventListener("click", async () => {
 function renderSplit() {
   const pages = cachetPages;
   splitListEl.innerHTML = "";
+  // Après un premier envoi, on FIGE le découpage : re-couper/fusionner
+  // mélangerait des contrats déjà rangés dans Drive avec d'autres.
+  const locked = sentLog.length > 0;
 
   // Construire les groupes (contrats) à partir de splitFlags.
   const groups = [];
@@ -568,6 +805,9 @@ function renderSplit() {
   groups.forEach((idxs, gi) => {
     const card = document.createElement("div");
     card.className = "ct-card";
+    const firstPage = pages[idxs[0]];
+    const isSent = sentFirstPages.has(firstPage);
+    const isSkipped = skippedFirstPages.has(firstPage);
 
     // En-tête : numéro + "Contrat N" + nb de pages (+ fusionner si pas le 1er)
     const head = document.createElement("div");
@@ -580,9 +820,13 @@ function renderSplit() {
     title.textContent = "Contrat " + (gi + 1);
     const meta = document.createElement("span");
     meta.className = "ct-card__meta";
-    meta.textContent = "· " + idxs.length + (idxs.length > 1 ? " pages" : " page");
+    meta.textContent = isSent
+      ? "· ✓ envoyé"
+      : isSkipped
+        ? "· ignoré"
+        : "· " + idxs.length + (idxs.length > 1 ? " pages" : " page");
     head.append(badge, title, meta);
-    if (gi > 0) {
+    if (gi > 0 && !locked) {
       const merge = document.createElement("button");
       merge.type = "button";
       merge.className = "ct-card__merge";
@@ -612,15 +856,15 @@ function renderSplit() {
     });
     card.appendChild(pagesRow);
 
-    // Si le contrat a plusieurs pages : proposer de le couper.
-    if (idxs.length > 1) {
+    // Si le contrat a plusieurs pages : proposer de le couper (sauf figé).
+    if (idxs.length > 1 && !locked) {
       const splits = document.createElement("div");
       splits.className = "ct-splits";
       idxs.slice(1).forEach((i) => {
         const b = document.createElement("button");
         b.type = "button";
         b.className = "ct-split";
-        b.textContent = "Couper : nouveau contrat dès la page " + (i + 1);
+        b.textContent = "✂ Couper : nouveau contrat dès la page " + (i + 1);
         b.addEventListener("click", () => {
           splitFlags[i] = true;
           renderSplit();
@@ -637,31 +881,100 @@ function renderSplit() {
   splitCountEl.textContent = n + (n <= 1 ? " contrat" : " contrats");
 }
 
-document.getElementById("btn-split-back").addEventListener("click", () => showScreen(cachetReturnScreen));
+// Quitte le parcours cachet (avec confirmation si des contrats non
+// envoyés seraient perdus), puis nettoie l'état. Si des contrats ont déjà
+// été envoyés, on passe par l'écran de confirmation (récapitulatif honnête).
+function leaveCachetFlow() {
+  const total = cachetContracts.length;
+  const handled = sentFirstPages.size + skippedFirstPages.size;
+  const unsentRemain = total === 0 || handled < total; // 0 = découpage pas encore validé
+  if (cachetReturnScreen === "screen-home" && cachetPages.length > 0 && unsentRemain) {
+    const msg = sentLog.length > 0
+      ? "Abandonner les contrats restants (non envoyés) ?"
+      : `Abandonner ces ${cachetPages.length} page${cachetPages.length > 1 ? "s" : ""} ?`;
+    if (!confirm(msg)) return;
+  }
+  cachetPages = [];
+  cachetContracts = [];
+  splitFlags = [];
+  cameraMode = "scan";
+  if (sentLog.length > 0) {
+    // Quelque chose a bien été envoyé → récapitulatif plutôt que silence.
+    renderDone();
+    setStep("envoi");
+    showScreen("screen-done");
+    return;
+  }
+  showScreen(cachetReturnScreen);
+}
+
+document.getElementById("btn-split-back").addEventListener("click", leaveCachetFlow);
 document.getElementById("btn-split-confirm").addEventListener("click", () => {
   cachetContracts = buildContracts();
   startCachetContract(0);
 });
 
-// Fin du lot cachet : message récap, nettoyage et retour à l'accueil.
+// Fin du lot cachet : écran de confirmation (si au moins un envoi),
+// sinon simple retour à l'écran d'origine (rien n'est effacé).
 function finishCachet() {
-  const sent = sentFirstPages.size;
-  if (sent > 0) {
-    alert(`Envoyé ✅ ${sent > 1 ? sent + " cachets rangés" : "Cachet rangé"} dans Drive + feuille.\n(Si rien n'apparaît, re-règle l'URL via ⚙️ Connecteur Google.)`);
-  }
-  if (cachetReturnScreen === "screen-pages") clearPages(); // ne vide la liste scan QUE si elle en était la source
+  const sentSomething = sentLog.length > 0;
+  // On ne vide la liste scan QUE si elle était la source ET qu'on a envoyé.
+  if (sentSomething && cachetReturnScreen === "screen-pages") clearPages();
   cachetPages = [];
   cameraMode = "scan";
   pendingPdf = null;
   exportBtn.textContent = EXPORT_LABEL;
-  showScreen("screen-home");
+  exportBtn.classList.remove("btn-primary--ready");
+  if (!sentSomething) {
+    showScreen(cachetReturnScreen); // ex. tout a été "ignoré" → pages conservées
+    return;
+  }
+  renderDone();
+  setStep("envoi");
+  showScreen("screen-done");
 }
 
+// Remplit l'écran de confirmation avec les contrats envoyés.
+function renderDone() {
+  const n = sentLog.length;
+  document.getElementById("done-title").textContent =
+    n > 1 ? `${n} contrats envoyés` : "Contrat envoyé";
+  // Honnêteté : en mode "aveugle" (vieux déploiement du connecteur), on ne
+  // peut pas confirmer la réception côté Google.
+  document.querySelector("#screen-done .done__sub").textContent = batchConfirmed
+    ? "Rangé dans Drive + ajouté à la feuille."
+    : "Envoyé — vérifie la feuille (réception non confirmée).";
+  const list = document.getElementById("done-list");
+  list.innerHTML = "";
+  sentLog.forEach((entry) => {
+    const li = document.createElement("li");
+    li.className = "done__item";
+    const ck = document.createElement("span");
+    ck.className = "done__item-check";
+    ck.textContent = "✓";
+    const name = document.createElement("span");
+    name.className = "done__item-name";
+    name.textContent = entry.filename;
+    li.append(ck, name);
+    list.appendChild(li);
+  });
+}
+document.getElementById("btn-done-home").addEventListener("click", () => {
+  sentLog = [];
+  showScreen("screen-home");
+});
+
 // Affiche le formulaire pré-rempli pour le contrat n° i du lot. Saute les
-// contrats déjà envoyés (anti-doublon si on revient en arrière) et termine
-// le lot s'il n'en reste plus.
+// contrats déjà envoyés ou ignorés (anti-doublon si on revient en arrière)
+// et termine le lot s'il n'en reste plus.
 function startCachetContract(i) {
-  while (cachetContracts[i] && sentFirstPages.has(cachetContracts[i].pages[0])) i++;
+  while (
+    cachetContracts[i] &&
+    (sentFirstPages.has(cachetContracts[i].pages[0]) ||
+      skippedFirstPages.has(cachetContracts[i].pages[0]))
+  ) {
+    i++;
+  }
   if (i >= cachetContracts.length) {
     finishCachet();
     return;
@@ -670,14 +983,28 @@ function startCachetContract(i) {
   const total = cachetContracts.length;
   const c = cachetContracts[i];
   fillForm(extractFields(c.text || ""));
-  document.querySelector("#screen-contract .wordmark").textContent =
-    total > 1 ? `Fiche cachet ${i + 1}/${total}` : "Fiche cachet";
+  renderContractStrip(c);
+  cachetError.hidden = true;
+  document.getElementById("contract-count").textContent =
+    total > 1 ? `Contrat ${i + 1} sur ${total}` : "";
+  document.getElementById("step-fiches-count").textContent =
+    total > 1 ? ` ${i + 1}/${total}` : "";
   document.getElementById("btn-cachet-save").textContent =
     total > 1 ? `Enregistrer (${i + 1}/${total})` : "Enregistrer";
+  document.getElementById("btn-cachet-skip").hidden = total <= 1;
+  refreshConnectorState();
+  setStep("fiches");
   showScreen("screen-contract");
 }
 
-// Formulaire → "Pré-remplir (OCR)" : ré-applique l'extraction au contrat courant.
+// "Ignorer ce contrat" : ne pas l'envoyer, passer au suivant.
+document.getElementById("btn-cachet-skip").addEventListener("click", () => {
+  const c = cachetContracts[cachetIndex];
+  if (c && c.pages[0]) skippedFirstPages.add(c.pages[0]);
+  startCachetContract(cachetIndex + 1);
+});
+
+// Formulaire → "Ré-extraire (OCR)" : ré-applique l'extraction au contrat courant.
 document.getElementById("btn-prefill").addEventListener("click", async () => {
   const c = cachetContracts[cachetIndex];
   if (!c) return;
@@ -686,28 +1013,36 @@ document.getElementById("btn-prefill").addEventListener("click", async () => {
   btn.disabled = true;
   try {
     let text = c.text;
-    if (!text) {
+    if (!text || !text.trim()) { // texte vide OU blanc (OCR raté) → on refait
       let acc = "";
       for (let i = 0; i < c.pages.length; i++) {
         btn.textContent = `Analyse ${i + 1}/${c.pages.length}…`;
         const lines = await ocrPage(c.pages[i]);
         acc += lines.map((l) => l.text).join("\n") + "\n";
       }
-      c.text = text = acc;
+      c.text = text = acc.trim();
     }
+    // si l'utilisateur a changé de contrat pendant l'analyse, on ne remplit pas
+    if (cachetContracts[cachetIndex] !== c) return;
     fillForm(extractFields(text));
   } catch (e) {
     console.error(e);
-    alert("L'analyse OCR a échoué. Tu peux remplir la fiche à la main.");
+    showToast("L'analyse OCR a échoué. Tu peux remplir la fiche à la main.", 4500);
   } finally {
     btn.textContent = label;
     btn.disabled = false;
   }
 });
 
-// Retour depuis le formulaire : vers le découpage (si lot) ou l'écran d'origine.
+// Retour depuis le formulaire : vers le découpage (si lot, rien n'est
+// perdu) ou sortie du parcours (avec confirmation au besoin).
 document.getElementById("btn-cachet-back").addEventListener("click", () => {
-  showScreen(cachetContracts.length > 1 ? "screen-split" : cachetReturnScreen);
+  if (cachetContracts.length > 1) {
+    setStep("decoupage");
+    showScreen("screen-split");
+    return;
+  }
+  leaveCachetFlow();
 });
 
 function blobToDataURL(blob) {
@@ -719,36 +1054,91 @@ function blobToDataURL(blob) {
   });
 }
 
-// URL du connecteur Apps Script (stockée sur l'appareil, pas dans le code public).
-function getConnectorUrl(forcePrompt) {
-  let url = localStorage.getItem("scanzen_gas_url") || "";
-  if (forcePrompt || !url) {
-    const v = prompt("Colle l'URL du connecteur Google (elle finit par /exec) :", url);
-    if (v && v.trim()) {
-      url = v.trim();
-      localStorage.setItem("scanzen_gas_url", url);
+// ===================================================================
+// Connecteur Google (Apps Script) — réglage + envoi
+// ===================================================================
+
+// L'URL /exec est stockée sur l'appareil (pas dans le code public).
+function connectorUrl() {
+  return localStorage.getItem("scanzen_gas_url") || "";
+}
+function refreshConnectorState() {
+  document.getElementById("connector-state").textContent = connectorUrl()
+    ? "configuré ✓"
+    : "à configurer";
+  document.getElementById("connector-url").value = connectorUrl();
+}
+document.getElementById("btn-connector-save").addEventListener("click", () => {
+  const v = document.getElementById("connector-url").value.trim();
+  if (!/^https:\/\/script\.google\.com\/.+\/exec$/.test(v)) {
+    showToast("L'URL doit commencer par https://script.google.com et finir par /exec", 4500);
+    return;
+  }
+  localStorage.setItem("scanzen_gas_url", v);
+  refreshConnectorState();
+  document.getElementById("connector").open = false;
+  showToast("Connecteur enregistré ✓");
+});
+
+// Envoie le contrat au connecteur. Renvoie true si la réception est
+// CONFIRMÉE par Google, false si l'envoi est parti mais que le
+// navigateur n'a pas pu lire la réponse. Lance une erreur si le réseau
+// est indisponible (l'envoi n'est PAS parti → l'utilisateur réessaie).
+//
+// ⚠️ Important : un POST en text/plain est une "requête simple" — le
+// navigateur l'ENVOIE toujours, même s'il refuse ensuite de nous montrer
+// la réponse. Il ne faut donc JAMAIS renvoyer le même contrat en repli
+// (cela créerait un doublon dans Drive). En cas de réponse illisible, on
+// sonde simplement la connexion avec un GET sans effet de bord.
+async function postToConnector(url, payload) {
+  const body = JSON.stringify(payload);
+  const headers = { "Content-Type": "text/plain;charset=utf-8" };
+  let res;
+  try {
+    res = await fetch(url, { method: "POST", headers, body });
+  } catch (e) {
+    try {
+      await fetch(url, { method: "GET", mode: "no-cors", cache: "no-store" });
+      return false; // le serveur répond → le POST est parti, juste non confirmé
+    } catch (e2) {
+      throw new Error("Réseau indisponible"); // rien n'est parti → réessayer
     }
   }
-  return url;
+  if (!res.ok) throw new Error("HTTP " + res.status);
+  return true;
 }
-
-// ⚙️ Régler / changer le connecteur
-document.getElementById("btn-config-gas").addEventListener("click", () => {
-  if (getConnectorUrl(true)) alert("Connecteur enregistré ✅");
-});
 
 // Fiche → "Enregistrer" : envoie le contrat COURANT au connecteur Google,
 // puis passe au contrat suivant du lot (ou termine).
 document.getElementById("btn-cachet-save").addEventListener("click", async () => {
-  let url = getConnectorUrl(false);
-  if (!url) url = getConnectorUrl(true); // pas encore réglé → on demande
-  if (!url) return; // annulé
+  const url = connectorUrl();
+  if (!url) {
+    // Pas encore configuré : on ouvre le panneau au lieu d'un prompt().
+    const panel = document.getElementById("connector");
+    panel.open = true;
+    panel.scrollIntoView({ block: "center" });
+    document.getElementById("connector-url").focus();
+    showToast("Règle d'abord le connecteur Google ⚙️", 4000);
+    return;
+  }
 
   const f = currentFields();
+  // Montants : on valide ET on normalise ("1 234.5" → "1234,50").
+  const brutN = f.brut ? parseMoney(f.brut) : NaN;
+  if (f.brut && isNaN(brutN)) {
+    showToast("Montant brut illisible (exemple attendu : 290,07)", 4500);
+    return;
+  }
+  const netN = f.net ? parseMoney(f.net) : NaN;
+  if (f.net && isNaN(netN)) {
+    showToast("Montant net illisible (exemple attendu : 226,25)", 4500);
+    return;
+  }
   const filename = buildFilename(f) + ".pdf";
   const total = cachetContracts.length || 1;
   const c = cachetContracts[cachetIndex] || { pages: cachetPages };
   const btn = document.getElementById("btn-cachet-save");
+  cachetError.hidden = true;
   btn.disabled = true;
   btn.textContent = "Envoi…";
   try {
@@ -759,25 +1149,72 @@ document.getElementById("btn-cachet-save").addEventListener("click", async () =>
       annee: f.date ? f.date.slice(0, 4) : String(new Date().getFullYear()),
       date: f.date, projet: f.projet, studio: f.studio, employe: f.employe,
       da: f.da, role: f.role, lignes: f.lignes,
-      brut: toComma(f.brut), net: toComma(f.net), // virgule décimale → € dans la feuille
+      // virgule décimale, sans espaces → la feuille reconnaît le montant (€)
+      brut: f.brut ? formatMoney(brutN) : "",
+      net: f.net ? formatMoney(netN) : "",
       pdfBase64,
     };
-    await fetch(url, {
-      method: "POST",
-      mode: "no-cors",
-      headers: { "Content-Type": "text/plain;charset=utf-8" },
-      body: JSON.stringify(payload),
-    });
-    if (c.pages && c.pages[0]) sentFirstPages.add(c.pages[0]); // marque ce contrat comme envoyé
+    const confirmed = await postToConnector(url, payload);
+    batchConfirmed = batchConfirmed && confirmed;
+    if (c.pages && c.pages[0]) sentFirstPages.add(c.pages[0]); // anti-doublon
+    sentLog.push({ filename });
+    if (total > 1) showToast(`Contrat ${cachetIndex + 1}/${total} envoyé ✓`);
     startCachetContract(cachetIndex + 1); // contrat suivant (ou fin du lot)
   } catch (e) {
     console.error(e);
-    alert("Échec de l'envoi. Vérifie l'URL du connecteur (⚙️ Connecteur Google).");
+    cachetError.hidden = false; // bandeau : saisies conservées, réessaie
     btn.textContent = total > 1 ? `Enregistrer (${cachetIndex + 1}/${total})` : "Enregistrer";
   } finally {
     btn.disabled = false;
   }
 });
+
+// ===================================================================
+// Bouton retour du téléphone : navigue dans l'app au lieu de la quitter
+// ===================================================================
+// On garde UN cran d'historique en réserve ; un appui "retour" revient à
+// l'écran précédent (même logique que les boutons à l'écran). Sur
+// l'accueil, un 2e appui quitte réellement.
+let backTrapped = false;
+function trapBack() {
+  if (!backTrapped) {
+    history.pushState({ scanzen: true }, "");
+    backTrapped = true;
+  }
+}
+window.addEventListener("popstate", () => {
+  backTrapped = false;
+  // Opération en cours (OCR, fabrication du PDF…) : on ignore le retour.
+  if (!busy.hidden ||
+      document.getElementById("screen-pages").classList.contains("pages--locked")) {
+    trapBack();
+    return;
+  }
+  if (!viewerEl.hidden) {
+    // la visionneuse est ouverte → le retour la ferme
+    closeViewer();
+    trapBack();
+    return;
+  }
+  const active = document.querySelector(".screen--active");
+  const id = active ? active.id : "screen-home";
+  if (id === "screen-home") return; // accueil : l'appui suivant sort vraiment
+  goBackFrom(id);
+  trapBack();
+});
+function goBackFrom(id) {
+  if (id === "screen-camera") closeCamera();
+  else if (id === "screen-preview" || id === "screen-crop") openCamera();
+  else if (id === "screen-result") resultRetakeBtn.click();
+  else if (id === "screen-pages") showScreen("screen-home"); // les pages restent en mémoire
+  else if (id === "screen-split") leaveCachetFlow();
+  else if (id === "screen-contract") document.getElementById("btn-cachet-back").click();
+  else if (id === "screen-done") document.getElementById("btn-done-home").click();
+  else showScreen("screen-home");
+}
+
+// État initial du panneau connecteur.
+refreshConnectorState();
 
 // --- PWA : enregistre le service worker (installation + hors-ligne) ---
 if ("serviceWorker" in navigator) {

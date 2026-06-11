@@ -13,8 +13,10 @@ export async function startCamera(videoEl) {
   stream = await navigator.mediaDevices.getUserMedia({
     video: {
       facingMode: { ideal: "environment" }, // caméra arrière si dispo
-      width: { ideal: 2560 },
-      height: { ideal: 1440 },
+      // On demande du 4K : le téléphone donne ce qu'il peut, et plus de
+      // pixels = texte plus net après redressement.
+      width: { ideal: 3840 },
+      height: { ideal: 2160 },
     },
     audio: false,
   });

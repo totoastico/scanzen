@@ -73,6 +73,13 @@
       <button class="camera__done" id="btn-camera-done" type="button" hidden>Terminer (0)</button>
     </div>
 
+    <!-- Éclair blanc bref à chaque capture (feedback visuel) -->
+    <div class="camera__flash" id="camera-flash"></div>
+
+    <!-- Mode cachet : consigne (avant la 1re page) puis vignettes des pages prises -->
+    <p class="camera__hint" id="camera-hint" hidden>Photographie chaque page du lot, puis « Terminer »</p>
+    <div class="camera__strip" id="camera-strip" hidden></div>
+
     <!-- Barre du bas : bouton de capture (dominant) -->
     <div class="camera__bottom">
       <button class="shutter" id="btn-capture" type="button" aria-label="Capturer la photo"></button>
@@ -118,9 +125,11 @@
       <button class="btn-primary" id="btn-crop-confirm" type="button">Valider</button>
     </div>
 
-    <!-- Voile affiché le temps qu'OpenCV se charge (1re fois seulement) -->
+    <!-- Voile affiché le temps qu'OpenCV se charge (1re fois seulement).
+         En cas d'échec (hors-ligne…), un bouton Retour évite le cul-de-sac. -->
     <div class="crop__loading" id="crop-loading" hidden>
-      <span>Chargement du moteur de détection…</span>
+      <span id="crop-loading-text">Chargement du moteur de détection…</span>
+      <button class="btn-secondary btn-secondary--light" id="btn-crop-loading-back" type="button" hidden>Retour</button>
     </div>
   </section>
 
@@ -163,14 +172,16 @@
 
     <div class="pages__list" id="pages-list"></div>
 
-    <div class="pages__cachet">
-      <button class="btn-secondary" id="btn-cachet" type="button">🎙️ Fiche cachet (contrat)</button>
-    </div>
-
     <label class="ocr-toggle">
       <input type="checkbox" id="ocr-toggle" checked />
       <span>Texte sélectionnable (OCR, français — plus lent)</span>
     </label>
+
+    <!-- Raccourci discret : envoyer ces pages dans le parcours cachet
+         (utile quand un contrat a été pris via le scanner). -->
+    <div class="pages__cachet">
+      <button class="upload-link" id="btn-cachet" type="button">🎙️ Classer ces pages en cachet</button>
+    </div>
 
     <div class="pages__actions">
       <button class="btn-secondary" id="btn-add-page" type="button">+ Ajouter une page</button>
@@ -185,46 +196,115 @@
   <section class="screen screen--contract" id="screen-contract">
     <header class="pages__top">
       <span class="wordmark">Fiche cachet</span>
+      <span class="pages__count" id="contract-count"></span>
     </header>
+    <!-- Fil d'étapes du parcours cachet -->
+    <nav class="steps" aria-label="Étapes du parcours cachet">
+      <span class="step" data-step="pages">Pages</span>
+      <span class="step" data-step="decoupage">Découpage</span>
+      <span class="step" data-step="fiches">Fiches<span class="step__count" id="step-fiches-count"></span></span>
+      <span class="step" data-step="envoi">Envoi</span>
+    </nav>
 
     <div class="form">
-      <button class="btn-secondary" id="btn-prefill" type="button">✨ Pré-remplir depuis le scan (OCR)</button>
+      <!-- Vignettes du contrat en cours : taper une page l'ouvre en grand
+           pour vérifier les champs sans quitter le formulaire. -->
+      <div class="ct-strip" id="contract-strip" hidden></div>
 
-      <label class="field">Projet / Œuvre
-        <input id="f-projet" type="text" />
-      </label>
+      <!-- L'ordre des champs suit la lecture d'un contrat :
+           studio → employé → projet → DA → rôle → date/lignes → montants. -->
       <label class="field">Studio d'enregistrement
-        <input id="f-studio" type="text" />
+        <input id="f-studio" type="text" autocapitalize="words" autocomplete="off" />
       </label>
-      <label class="field">Employé (si différent du studio)
-        <input id="f-employe" type="text" />
+      <label class="field">
+        <span class="field__head">Employé (si différent)
+          <button class="field__chip" id="btn-copy-studio" type="button">= studio</button>
+        </span>
+        <input id="f-employe" type="text" autocapitalize="words" autocomplete="off" />
+      </label>
+      <label class="field">Projet / Œuvre
+        <input id="f-projet" type="text" autocapitalize="words" autocomplete="off" />
       </label>
       <label class="field">Directeur artistique
-        <input id="f-da" type="text" />
-      </label>
-      <label class="field">Date de réalisation
-        <input id="f-date" type="date" />
-      </label>
-      <label class="field">Nombre de lignes
-        <input id="f-lignes" type="number" inputmode="numeric" />
-      </label>
-      <label class="field">Montant brut (€)
-        <input id="f-brut" type="number" inputmode="decimal" step="0.01" />
-      </label>
-      <label class="field">Montant net prévu (€)
-        <input id="f-net" type="number" inputmode="decimal" step="0.01" />
+        <input id="f-da" type="text" autocapitalize="words" autocomplete="off" />
       </label>
       <label class="field">Rôle
-        <input id="f-role" type="text" placeholder="ND" />
+        <input id="f-role" type="text" placeholder="ND" autocapitalize="words" autocomplete="off" />
       </label>
 
+      <div class="field-row">
+        <label class="field">Date de réalisation
+          <input id="f-date" type="date" />
+        </label>
+        <label class="field">Lignes
+          <input id="f-lignes" type="number" inputmode="numeric" />
+        </label>
+      </div>
+
+      <div class="field-row">
+        <label class="field">Brut
+          <span class="field__money">
+            <input id="f-brut" type="text" inputmode="decimal" placeholder="0,00" autocomplete="off" />
+            <span class="field__unit">€</span>
+          </span>
+        </label>
+        <label class="field">Net prévu
+          <span class="field__money">
+            <input id="f-net" type="text" inputmode="decimal" placeholder="0,00" autocomplete="off" />
+            <span class="field__unit">€</span>
+          </span>
+        </label>
+      </div>
+
       <p class="form__filename">Fichier : <span id="f-filename">…</span></p>
-      <button class="upload-link" id="btn-config-gas" type="button">⚙️ Connecteur Google</button>
+
+      <button class="upload-link" id="btn-prefill" type="button">↻ Ré-extraire depuis le scan (OCR)</button>
+      <button class="upload-link" id="btn-cachet-skip" type="button" hidden>Ignorer ce contrat (ne pas l'envoyer)</button>
+
+      <!-- Réglage du connecteur Google : panneau repliable, plus de prompt() -->
+      <details class="connector" id="connector">
+        <summary>⚙️ Connecteur Google — <span id="connector-state">à configurer</span></summary>
+        <p class="connector__hint">Colle l'URL de déploiement Apps Script (elle finit par /exec).</p>
+        <input id="connector-url" type="url" inputmode="url" placeholder="https://script.google.com/macros/s/…/exec" />
+        <button class="btn-secondary" id="btn-connector-save" type="button">Enregistrer l'URL</button>
+      </details>
     </div>
+
+    <!-- Erreur d'envoi : bandeau au-dessus des actions (les saisies restent) -->
+    <p class="form__error" id="cachet-error" hidden>
+      ⚠️ L'envoi a échoué (réseau ou connecteur). Tes saisies sont conservées —
+      corrige puis appuie à nouveau sur « Enregistrer ».
+    </p>
 
     <div class="pages__actions">
       <button class="btn-secondary" id="btn-cachet-back" type="button">Retour</button>
       <button class="btn-primary" id="btn-cachet-save" type="button">Enregistrer</button>
+    </div>
+  </section>
+
+  <!-- =========================================================
+       ÉCRAN CONFIRMATION (fin du lot cachet)
+       Liste les contrats réellement envoyés.
+       ========================================================= -->
+  <section class="screen screen--done" id="screen-done">
+    <header class="pages__top">
+      <span class="wordmark">Envoi</span>
+    </header>
+    <nav class="steps" aria-label="Étapes du parcours cachet">
+      <span class="step" data-step="pages">Pages</span>
+      <span class="step" data-step="decoupage">Découpage</span>
+      <span class="step" data-step="fiches">Fiches</span>
+      <span class="step" data-step="envoi">Envoi</span>
+    </nav>
+    <div class="done">
+      <span class="done__check">✓</span>
+      <h2 class="done__title" id="done-title">…</h2>
+      <p class="done__sub">Rangé dans Drive + ajouté à la feuille.</p>
+      <ul class="done__list" id="done-list"></ul>
+      <p class="done__hint">Si rien n'apparaît dans Drive, re-règle l'URL via ⚙️ Connecteur Google.</p>
+    </div>
+    <div class="pages__actions">
+      <button class="btn-primary" id="btn-done-home" type="button">Accueil</button>
     </div>
   </section>
 
@@ -238,6 +318,13 @@
       <span class="wordmark">Découpage</span>
       <span class="pages__count" id="split-count">…</span>
     </header>
+    <!-- Fil d'étapes du parcours cachet (mis à jour par setStep) -->
+    <nav class="steps" aria-label="Étapes du parcours cachet">
+      <span class="step" data-step="pages">Pages</span>
+      <span class="step" data-step="decoupage">Découpage</span>
+      <span class="step" data-step="fiches">Fiches</span>
+      <span class="step" data-step="envoi">Envoi</span>
+    </nav>
     <p class="split__hint">Voici les contrats détectés. Ajuste si besoin, puis valide.</p>
     <div class="split__list" id="split-list"></div>
     <div class="pages__actions">
@@ -246,10 +333,22 @@
     </div>
   </section>
 
-  <!-- Voile "occupé" plein écran (ex. lecture d'un PDF en cours) -->
+  <!-- Voile "occupé" plein écran (ex. lecture d'un PDF, OCR en cours).
+       Annulable quand l'opération s'y prête. -->
   <div class="busy" id="busy" hidden>
+    <span class="busy__spinner"></span>
     <span id="busy-text">…</span>
+    <button class="btn-secondary" id="busy-cancel" type="button" hidden>Annuler</button>
   </div>
+
+  <!-- Visionneuse plein écran (pages du contrat) : taper = zoom -->
+  <div class="viewer" id="viewer" hidden>
+    <button class="icon-button viewer__close" id="btn-viewer-close" type="button" aria-label="Fermer">✕</button>
+    <div class="viewer__scroll" id="viewer-scroll"></div>
+  </div>
+
+  <!-- Petit message furtif non bloquant (ex. « Contrat 1/3 envoyé ✓ ») -->
+  <div class="toast" id="toast" role="status"></div>
 
   <!-- type="module" : permet d'utiliser import/export entre nos fichiers JS -->
   <script type="module" src="js/app.js"></script>

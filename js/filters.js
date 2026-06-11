@@ -75,53 +75,79 @@ function unsharp(mat, amount) {
 
 // Mode "Auto" : couleur, éclairage égalisé (sans sur-éclairer) + léger
 // contraste + accentuation douce.
+// L'égalisation se fait CANAL PAR CANAL (rouge, vert, bleu) : une ombre
+// n'assombrit pas les trois couleurs de la même façon, donc on enlève
+// l'ombre ET sa teinte (bleutée, jaunâtre…). Chaque canal est ramené
+// vers SA propre moyenne → la teinte naturelle du papier est conservée
+// (pas de blanc délavé).
 function cvAuto(source) {
   const cv = window.cv;
-  const src = cv.imread(drawCanvas(source));
-  const rgb = new cv.Mat();
-  cv.cvtColor(src, rgb, cv.COLOR_RGBA2RGB);
-  const gray = new cv.Mat();
-  cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+  // Tout est déclaré d'avance et libéré dans `finally` : même si OpenCV
+  // plante en cours de route (mémoire…), rien ne fuit.
+  let src, rgb, channels, fixed, norm, sharp;
+  const temp = [];
+  try {
+    src = cv.imread(drawCanvas(source));
+    rgb = new cv.Mat();
+    cv.cvtColor(src, rgb, cv.COLOR_RGBA2RGB);
 
-  const bg = estimateBackground(gray);
-  const meanBg = cv.mean(bg)[0] || 200; // luminosité moyenne du fond
-  const bg3 = new cv.Mat();
-  cv.cvtColor(bg, bg3, cv.COLOR_GRAY2RGB);
+    channels = new cv.MatVector();
+    cv.split(rgb, channels);
+    fixed = new cv.MatVector();
+    for (let i = 0; i < 3; i++) {
+      const ch = channels.get(i);
+      temp.push(ch);
+      const bg = estimateBackground(ch);
+      temp.push(bg);
+      const out = new cv.Mat();
+      temp.push(out);
+      cv.divide(ch, bg, out, cv.mean(bg)[0] || 200);
+      fixed.push_back(out);
+    }
+    norm = new cv.Mat();
+    cv.merge(fixed, norm);
+    cv.convertScaleAbs(norm, norm, 1.1, -5); // contraste léger
+    sharp = unsharp(norm, 0.4); // accentuation douce
 
-  // Égalise l'éclairage vers la MOYENNE (et non vers 255) → ombres
-  // atténuées, mais on garde la luminosité naturelle de la page.
-  const norm = new cv.Mat();
-  cv.divide(rgb, bg3, norm, meanBg);
-  cv.convertScaleAbs(norm, norm, 1.1, -5); // contraste léger
-  const sharp = unsharp(norm, 0.4); // accentuation douce
-
-  const canvas = document.createElement("canvas");
-  cv.imshow(canvas, sharp);
-
-  [src, rgb, gray, bg, bg3, norm, sharp].forEach((m) => m.delete());
-  return toDataURL(canvas);
+    const canvas = document.createElement("canvas");
+    cv.imshow(canvas, sharp);
+    return toDataURL(canvas);
+  } finally {
+    [src, rgb, norm, sharp, ...temp, channels, fixed].forEach((m) => {
+      try {
+        if (m) m.delete();
+      } catch (_) {}
+    });
+  }
 }
 
 // Mode "Noir & blanc" : éclairage normalisé + netteté + seuillage Otsu.
 function cvBW(source) {
   const cv = window.cv;
-  const src = cv.imread(drawCanvas(source));
-  const gray = new cv.Mat();
-  cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+  let src, gray, bg, norm, sharp, dst;
+  try {
+    src = cv.imread(drawCanvas(source));
+    gray = new cv.Mat();
+    cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
 
-  const bg = estimateBackground(gray);
-  const norm = new cv.Mat();
-  cv.divide(gray, bg, norm, 255);
-  const sharp = unsharp(norm, 0.5);
+    bg = estimateBackground(gray);
+    norm = new cv.Mat();
+    cv.divide(gray, bg, norm, 255);
+    sharp = unsharp(norm, 0.5);
 
-  const dst = new cv.Mat();
-  cv.threshold(sharp, dst, 0, 255, cv.THRESH_BINARY | cv.THRESH_OTSU);
+    dst = new cv.Mat();
+    cv.threshold(sharp, dst, 0, 255, cv.THRESH_BINARY | cv.THRESH_OTSU);
 
-  const canvas = document.createElement("canvas");
-  cv.imshow(canvas, dst);
-
-  [src, gray, bg, norm, sharp, dst].forEach((m) => m.delete());
-  return toDataURL(canvas);
+    const canvas = document.createElement("canvas");
+    cv.imshow(canvas, dst);
+    return toDataURL(canvas);
+  } finally {
+    [src, gray, bg, norm, sharp, dst].forEach((m) => {
+      try {
+        if (m) m.delete();
+      } catch (_) {}
+    });
+  }
 }
 
 // --- Repli sans OpenCV ---------------------------------------------

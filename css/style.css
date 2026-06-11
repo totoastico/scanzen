@@ -105,6 +105,23 @@ body {
 .upload-link:active {
   opacity: 0.6;
 }
+/* La même apparence "lien discret" quand c'est un <button> */
+button.upload-link {
+  border: none;
+  background: none;
+  padding: 4px 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+}
+/* notre display:inline-flex écraserait l'attribut hidden sans ceci */
+.upload-link[hidden] {
+  display: none;
+}
+button.upload-link:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
 
 /* --- Accueil : deux "bulles" (Scanner / Cachet) --- */
 .home-choice {
@@ -484,12 +501,14 @@ body {
   display: none;
 }
 
-/* --- Voile "occupé" plein écran (ex. lecture d'un PDF) --- */
+/* --- Voile "occupé" plein écran (ex. lecture d'un PDF, OCR) --- */
 .busy {
   position: fixed;
   inset: 0;
   z-index: 60;
   display: flex;
+  flex-direction: column;
+  gap: 18px;
   align-items: center;
   justify-content: center;
   text-align: center;
@@ -500,6 +519,18 @@ body {
 }
 .busy[hidden] {
   display: none;
+}
+/* Petite roue qui tourne : montre que ça travaille (pas figé) */
+.busy__spinner {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 3px solid #e8e8e8;
+  border-top-color: var(--accent);
+  animation: spin 1s linear infinite;
+}
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
 
 /* --- Flèches de rotation, posées sur les bords de l'image --- */
@@ -819,13 +850,13 @@ body {
 }
 .ct-split {
   align-self: flex-start;
-  border: 1px dashed #c9c9c9;
-  background: #fafafa;
-  color: var(--muted);
-  font-size: 12px;
+  border: 1.5px solid var(--ink);
+  background: #fff;
+  color: var(--ink);
+  font-size: 13px;
   font-weight: 600;
   border-radius: 8px;
-  padding: 5px 10px;
+  padding: 8px 12px;
   cursor: pointer;
   touch-action: manipulation;
 }
@@ -838,6 +869,7 @@ body {
    (≈ un quart d'un grand écran PC, plein écran sur smartphone). */
 #screen-contract .pages__top,
 #screen-contract .form,
+#screen-contract .form__error,
 #screen-contract .pages__actions {
   width: 100%;
   max-width: 440px;
@@ -846,7 +878,398 @@ body {
 }
 #screen-contract .form {
   gap: 10px;
+  padding-top: 0; /* la bande de vignettes "sticky" colle au bord haut */
 }
 #screen-contract .field input {
   padding: 10px 12px;
+}
+/* le champ € a besoin de place à droite pour le symbole (règle APRÈS
+   celle du dessus pour gagner en priorité) */
+#screen-contract .field__money input {
+  padding-right: 32px;
+}
+
+/* ===================================================================
+   PARCOURS CACHET — composants du "chemin"
+   =================================================================== */
+
+/* --- Fil d'étapes : Pages → Découpage → Fiches → Envoi --- */
+.steps {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 0 24px 10px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.step {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.step::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #d9d9d9;
+}
+.step--done {
+  color: var(--ink);
+}
+.step--done::before {
+  background: var(--ink);
+}
+.step--current {
+  color: var(--accent);
+}
+.step--current::before {
+  background: var(--accent);
+}
+.step__count {
+  font-weight: 800;
+  margin-left: 2px;
+}
+#screen-split .steps,
+#screen-contract .steps,
+#screen-done .steps {
+  width: 100%;
+  max-width: 440px;
+  margin: 0 auto;
+}
+
+/* --- Caméra : éclair de capture, consigne, vignettes du lot cachet --- */
+.camera__flash {
+  position: absolute;
+  inset: 0;
+  background: #fff;
+  opacity: 0;
+  pointer-events: none;
+  z-index: 3;
+}
+.camera__flash.is-on {
+  animation: camflash 0.25s ease-out;
+}
+@keyframes camflash {
+  from { opacity: 0.8; }
+  to { opacity: 0; }
+}
+.camera__hint {
+  position: absolute;
+  top: calc(76px + env(safe-area-inset-top));
+  left: 0;
+  right: 0;
+  z-index: 2;
+  text-align: center;
+  color: #fff;
+  font-size: 14px;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.6);
+  padding: 0 24px;
+}
+.camera__hint[hidden] {
+  display: none;
+}
+.camera__strip {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(132px + env(safe-area-inset-bottom)); /* au-dessus du déclencheur */
+  z-index: 2;
+  display: flex;
+  gap: 8px;
+  padding: 6px 16px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.camera__strip[hidden] {
+  display: none;
+}
+.camera__strip img {
+  width: 44px;
+  height: 58px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  flex: none;
+}
+.camera__done:disabled {
+  opacity: 0.45;
+}
+
+/* --- Formulaire : deux champs courts côte à côte --- */
+.field-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.field input {
+  width: 100%;
+  min-width: 0; /* sinon le type=date refuse de rétrécir dans une grille */
+}
+.field__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.field__chip {
+  border: 1px solid #e0e0e0;
+  background: #f5f5f5;
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 999px;
+  padding: 3px 8px;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.field__chip:active {
+  opacity: 0.6;
+}
+
+/* --- Champs montants : symbole € intégré --- */
+.field__money {
+  position: relative;
+  display: block;
+}
+.field__unit {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--muted);
+  font-weight: 600;
+  pointer-events: none;
+}
+/* Net estimé (calculé depuis le brut, pas lu sur le contrat) */
+.input--est {
+  color: var(--muted);
+  font-style: italic;
+}
+
+/* --- Bande de vignettes du contrat (collée en haut du formulaire) --- */
+.ct-strip {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 8px 0;
+  background: var(--bg);
+  border-bottom: 1px solid #f0f0f0;
+}
+.ct-strip[hidden] {
+  display: none;
+}
+.ct-strip img {
+  width: 46px;
+  height: 62px;
+  object-fit: cover;
+  flex: none;
+  border: 1px solid #e8e8e8;
+  border-radius: 8px;
+  cursor: zoom-in;
+}
+
+/* --- Visionneuse plein écran (pages du contrat) --- */
+.viewer {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  background: #000;
+  display: flex;
+  flex-direction: column;
+}
+.viewer[hidden] {
+  display: none;
+}
+.viewer__close {
+  position: absolute;
+  top: calc(10px + env(safe-area-inset-top));
+  right: 12px;
+  z-index: 2;
+  background: rgba(255, 255, 255, 0.18);
+}
+.viewer__scroll {
+  flex: 1;
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.viewer__scroll img {
+  display: block;
+  width: 100%;
+}
+.viewer--zoom .viewer__scroll img {
+  width: 220%;
+  max-width: none;
+  cursor: zoom-out;
+}
+
+/* --- Panneau connecteur Google (repliable) --- */
+.connector {
+  border: 1px solid #ececec;
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.connector summary {
+  cursor: pointer;
+  font-weight: 600;
+  touch-action: manipulation;
+}
+.connector__hint {
+  margin: 8px 0 6px;
+  font-size: 12px;
+}
+.connector input {
+  width: 100%;
+  font-size: 13px;
+  padding: 9px 10px;
+  border: 1px solid #e8e8e8;
+  border-radius: 8px;
+  margin-bottom: 8px;
+}
+.connector .btn-secondary {
+  width: 100%;
+  font-size: 14px;
+  padding: 10px 16px;
+}
+
+/* --- Bandeau d'erreur d'envoi (formulaire cachet) --- */
+.form__error {
+  margin: 0 20px 8px;
+  padding: 10px 12px;
+  border: 1px solid #f1c4be;
+  border-radius: 10px;
+  background: #fdf1ef;
+  color: #c0392b;
+  font-size: 13px;
+  line-height: 1.4;
+}
+.form__error[hidden] {
+  display: none;
+}
+/* Sur petit écran, garde 20px de marge de chaque côté (sinon la règle
+   "colonne centrée 440px" colle le bandeau aux bords). */
+#screen-contract .form__error {
+  max-width: min(440px, calc(100% - 40px));
+}
+
+/* --- Écran de confirmation (fin du lot cachet) --- */
+.done {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: 10px;
+  padding: 24px;
+  width: 100%;
+  max-width: 440px;
+  margin: 0 auto;
+}
+.done__check {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  font-size: 32px;
+  display: grid;
+  place-items: center;
+}
+.done__title {
+  font-size: 24px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+.done__sub {
+  color: var(--muted);
+  font-size: 14px;
+}
+.done__list {
+  list-style: none;
+  width: 100%;
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  text-align: left;
+}
+.done__item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid #e8e8e8;
+  border-radius: 12px;
+  padding: 10px 12px;
+  font-size: 13px;
+}
+.done__item-check {
+  color: var(--accent);
+  font-weight: 800;
+  flex: none;
+}
+.done__item-name {
+  word-break: break-all;
+}
+.done__hint {
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 8px;
+}
+#screen-done .pages__top,
+#screen-done .pages__actions {
+  border-top: none;
+  width: 100%;
+  max-width: 440px;
+  margin: 0 auto;
+}
+
+/* --- Toast : message furtif non bloquant --- */
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: calc(24px + env(safe-area-inset-bottom));
+  transform: translateX(-50%) translateY(8px);
+  z-index: 70;
+  background: var(--ink);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  padding: 12px 20px;
+  border-radius: 999px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+  max-width: calc(100vw - 48px);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+.toast--on {
+  opacity: 1;
+  transform: translateX(-50%);
+}
+
+/* --- Export OCR : bouton "prêt" qui pulse + écran verrouillé pendant
+       la fabrication du PDF --- */
+@keyframes pulse {
+  50% { transform: scale(1.04); }
+}
+.btn-primary--ready {
+  animation: pulse 1s ease-in-out 3;
+}
+.pages--locked .pages__list,
+.pages--locked .pages__cachet,
+.pages--locked .ocr-toggle,
+.pages--locked #btn-add-page {
+  pointer-events: none;
+  opacity: 0.45;
 }
