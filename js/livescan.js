@@ -81,7 +81,7 @@ function detectTick(videoEl, gen) {
   } catch (e) {
     // une analyse ratée ne doit jamais casser la caméra
   }
-  timer = setTimeout(() => detectTick(videoEl, gen), 150);
+  timer = setTimeout(() => detectTick(videoEl, gen), 200);
 }
 
 function detectStep(videoEl) {
@@ -89,15 +89,17 @@ function detectStep(videoEl) {
   const vh = videoEl.videoHeight;
   if (!vw || !vh) return; // flux pas encore prêt
 
-  // Photo réduite du flux (640 px : coins précis, analyse encore rapide).
-  const w = 640;
+  // Photo réduite du flux (480 px). La visée n'est qu'un GUIDE visuel :
+  // 1 seule passe suffit et reste légère sur le téléphone. Le vrai
+  // détourage (au "Terminer", caméra coupée) refait une détection complète.
+  const w = 480;
   const h = Math.max(1, Math.round((vh * w) / vw));
   sample.width = w;
   sample.height = h;
   sampleCtx.drawImage(videoEl, 0, 0, w, h);
 
-  // 2 passes max : assez pour suivre, sans saturer le téléphone.
-  const quad = detectDocument(sample, 2);
+  // 1 passe : assez pour le cadre-guide, sans saturer le fil principal.
+  const quad = detectDocument(sample, 1);
   if (quad) {
     const scaled = {};
     for (const k of KEYS) {

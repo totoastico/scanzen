@@ -32,7 +32,6 @@ const EXPORT_LABEL = "Exporter en PDF";
 
 // --- Parcours cachet ---
 let cachetPages = [];                     // images du lot cachet en cours d'analyse
-let pageDewarps = [];                     // détourages auto en cours (promesses)
 let sentFirstPages = new Set();           // contrats déjà envoyés (clé = 1re page) → anti-doublon
 let skippedFirstPages = new Set();        // contrats ignorés volontairement
 let sentLog = [];                         // contrats réellement envoyés : [{ filename }]
@@ -182,17 +181,45 @@ async function openCamera() {
   }
 }
 
-// Attend la fin des détourages automatiques encore en cours (pour que
-// l'export PDF / l'analyse cachet ne partent jamais sur des photos brutes).
-async function flushDewarps() {
-  if (!pageDewarps.length) return;
-  showBusy("Détourage des pages…");
+// Traitement LOURD d'une page (détourage + filtre Auto). On le fait
+// CAMÉRA COUPÉE, en lot, pour ne JAMAIS se battre avec la visée en direct
+// sur le fil principal (c'était la cause des saccades).
+async function processPage(page) {
+  if (!page || page.processed) return;
   try {
-    await Promise.all(pageDewarps);
-  } finally {
-    hideBusy();
+    // 1) détourage/redressement (cadre de la visée si dispo, sinon détection)
+    const r = await autoDewarp(page.original, page.hint);
+    // 2) effet "Auto" (éclairage aplani) → image lisible pour l'OCR + le PDF
+    const flatCanvas = await imageToCanvas(r.dataUrl);
+    const display = applyFilter(flatCanvas, page.filter || "auto");
+    updatePage(page, { flat: r.dataUrl, display, corners: r.corners, processed: true });
+  } catch (e) {
+    console.error(e);
+    // détourage impossible → au moins appliquer l'effet sur la photo brute
+    try {
+      const c = await imageToCanvas(page.original);
+      const display = applyFilter(c, page.filter || "auto");
+      updatePage(page, { flat: page.original, display, processed: true });
+    } catch (_) {
+      updatePage(page, { processed: true });
+    }
   }
-  pageDewarps = [];
+}
+
+// Traite toutes les pages encore brutes, avec une progression claire.
+async function processAllPages() {
+  const todo = [];
+  for (let i = 0; i < pageCount(); i++) {
+    const p = getPage(i);
+    if (p && !p.processed) todo.push(p);
+  }
+  if (!todo.length) return;
+  for (let i = 0; i < todo.length; i++) {
+    showBusy(`Traitement des pages… ${i + 1}/${todo.length}`);
+    await processPage(todo[i]);
+    await new Promise((r) => setTimeout(r, 0)); // laisse l'interface respirer
+  }
+  hideBusy();
 }
 
 // --- Fermer la caméra. Les pages déjà prises restent dans la liste
@@ -208,7 +235,7 @@ async function closeCamera() {
     openEditor(page, editorFrom);
     return;
   }
-  await flushDewarps();
+  await processAllPages();
   showScreen(pageCount() > 0 ? "screen-pages" : "screen-home");
 }
 
@@ -344,49 +371,28 @@ document.getElementById("btn-capture").addEventListener("click", () => {
   flash.classList.add("is-on");
 
   // Cas "Reprendre cette photo" (depuis l'éditeur) : la nouvelle photo
-  // REMPLACE la page, sans toucher au reste de la liste.
+  // REMPLACE la page, sans toucher au reste de la liste. L'éditeur la
+  // traite (détourage + Auto) avant de l'afficher.
   if (replacePage) {
     const page = replacePage;
     replacePage = null;
     cameraSession++;
     stopLiveScan(cameraOverlay);
     stopCamera(video);
-    updatePage(page, { original: img, flat: img, display: img, corners: null, rotation: 0, filter: "original" });
-    showBusy("Détourage…");
-    autoDewarp(img, hint)
-      .then((r) => {
-        if (page.original === img) {
-          updatePage(page, { flat: r.dataUrl, display: r.dataUrl, corners: r.corners });
-        }
-      })
-      .catch(() => {}) // détourage raté → on garde la photo entière
-      .finally(() => {
-        hideBusy();
-        invalidatePendingPdf();
-        openEditor(page, editorFrom);
-      });
+    updatePage(page, { original: img, hint, flat: img, display: img, corners: null, rotation: 0, filter: "auto", processed: false });
+    invalidatePendingPdf();
+    openEditor(page, editorFrom);
     return;
   }
 
-  // Cas normal : nouvelle page à la fin de la liste.
-  const page = addPage({ original: img, flat: img, display: img });
-  const job = autoDewarp(img, hint)
-    .then((r) => {
-      // Photo remplacée OU page déjà retravaillée dans l'éditeur entre
-      // temps → on n'écrase pas le travail de l'utilisateur.
-      if (page.original !== img || page.flat !== img || page.display !== img) return;
-      updatePage(page, { flat: r.dataUrl, display: r.dataUrl, corners: r.corners });
-      // met à jour SA vignette sans reconstruire la bande
-      const cell = cameraStrip.children[pageIndex(page)];
-      if (cell) cell.src = r.dataUrl;
-    })
-    .catch(() => {}); // détourage raté → on garde la photo entière
-  pageDewarps.push(job);
+  // Cas normal : on ajoute la photo BRUTE (déclencheur instantané, aucune
+  // concurrence). Le détourage + Auto se fera au "Terminer", caméra coupée.
+  addPage({ original: img, hint, flat: img, display: img, filter: "auto", processed: false });
   invalidatePendingPdf();
   updateCameraDone();
 });
 
-// Caméra → "Terminer" : attend la fin des détourages, puis la liste.
+// Caméra → "Terminer" : caméra coupée, on traite tout le lot, puis la liste.
 let cameraDoneRunning = false; // anti double-déclenchement (Entrée clavier…)
 document.getElementById("btn-camera-done").addEventListener("click", async () => {
   if (cameraDoneRunning || pageCount() === 0) return;
@@ -396,7 +402,7 @@ document.getElementById("btn-camera-done").addEventListener("click", async () =>
     replacePage = null; // terminer la session abandonne un "Reprendre" en cours
     stopLiveScan(cameraOverlay);
     stopCamera(video);
-    await flushDewarps();
+    await processAllPages();
     showScreen("screen-pages");
   } finally {
     cameraDoneRunning = false;
@@ -414,6 +420,17 @@ let pendingCrop = null; // rognage refait, en attente du "OK" (Annuler l'oublie)
 async function openEditor(page, from) {
   if (!page) return;
   const seq = ++editorSeq;
+  // page pas encore traitée (ouverte depuis la bande caméra) → on la
+  // détoure + applique l'Auto d'abord.
+  if (!page.processed) {
+    showBusy("Traitement…");
+    try {
+      await processPage(page);
+    } finally {
+      hideBusy();
+    }
+    if (seq !== editorSeq) return;
+  }
   const canvas = await imageToCanvas(page.flat);
   if (seq !== editorSeq) return; // une ouverture plus récente a pris la main
   editorPage = page;
@@ -550,7 +567,7 @@ exportBtn.addEventListener("click", async () => {
     return; // annulé → on garde le PDF pour réessayer
   }
 
-  await flushDewarps(); // au cas où des détourages traînent encore
+  await processAllPages(); // garantit des pages détourées + aplanies
   const pages = getPages();
   if (pages.length === 0) return;
   const ocr = ocrToggle.checked;
@@ -846,7 +863,7 @@ cachetBtn.addEventListener("click", async () => {
   if (pageCount() === 0) return;
   // export PDF en cours → on ne lance pas deux gros traitements à la fois
   if (document.getElementById("screen-pages").classList.contains("pages--locked")) return;
-  await flushDewarps(); // si des détourages traînent encore, on les attend
+  await processAllPages(); // garantit des images détourées + aplanies pour l'OCR
   await startCachetFlow(getPages());
 });
 

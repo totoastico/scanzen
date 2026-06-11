@@ -27,17 +27,19 @@ const cachetShortcut = document.getElementById("btn-cachet");
 // Ajoute une page. Accepte une simple data URL (téléversement) ou un
 // objet déjà construit. Renvoie l'objet page (référence stable).
 export function addPage(p) {
-  const page =
-    typeof p === "string"
-      ? { original: p, flat: p, display: p, corners: null, rotation: 0, filter: "original" }
-      : {
-          original: p.original,
-          flat: p.flat || p.display || p.original,
-          display: p.display || p.original,
-          corners: p.corners || null,
-          rotation: p.rotation || 0,
-          filter: p.filter || "original",
-        };
+  const b = typeof p === "string" ? { original: p } : p;
+  const isUpload = typeof p === "string";
+  const page = {
+    original: b.original,
+    hint: b.hint || null, // cadre détecté à la prise (pour le détourage différé)
+    flat: b.flat || b.display || b.original,
+    display: b.display || b.original,
+    corners: b.corners || null,
+    rotation: b.rotation || 0,
+    filter: b.filter || (isUpload ? "original" : "auto"),
+    // un fichier importé est déjà propre → rien à détourer ; une photo, si.
+    processed: isUpload ? true : !!b.processed,
+  };
   pages.push(page);
   render();
   return page;
