@@ -123,60 +123,6 @@ button.upload-link:disabled {
   cursor: default;
 }
 
-/* --- Accueil : deux "bulles" (Scanner / Cachet) --- */
-.home-choice {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  width: 100%;
-  max-width: 360px;
-}
-.home-choice + .home-choice {
-  margin-top: 26px;
-}
-.bubble {
-  width: 100%;
-  min-height: 118px;
-  border-radius: 24px;
-  border: 2px solid var(--ink);
-  background: #fff;
-  color: var(--ink);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  cursor: pointer;
-  touch-action: manipulation;
-  transition: transform 0.08s ease;
-}
-.bubble:active {
-  transform: scale(0.97);
-}
-.bubble__title {
-  font-size: 28px;
-  font-weight: 800;
-  letter-spacing: -0.02em;
-}
-.bubble__sub {
-  font-size: 14px;
-  color: var(--muted);
-}
-.bubble--accent {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #fff;
-  box-shadow: 0 10px 30px rgba(37, 99, 235, 0.28);
-}
-.bubble--accent .bubble__sub {
-  color: rgba(255, 255, 255, 0.85);
-}
-.bubble--accent:active {
-  background: var(--accent-press);
-}
-.home-choice .upload-link {
-  margin-top: 10px;
-}
 .home__title {
   font-size: clamp(32px, 9vw, 44px);
   font-weight: 800;
@@ -703,14 +649,6 @@ button.upload-link:disabled {
 .btn-primary:disabled {
   opacity: 0.4;
   cursor: default;
-}
-
-/* --- Bouton "Fiche cachet" + formulaire contrat --- */
-.pages__cachet {
-  padding: 0 20px 4px;
-}
-.pages__cachet .btn-secondary {
-  width: 100%;
 }
 
 .form {
@@ -1272,6 +1210,93 @@ button.upload-link:disabled {
   margin: 0 auto;
 }
 
+/* --- Bouton PANDA (liste des pages → analyse cachet) ---
+   Rond, taille "bulle Messenger", côté pouce (bas droite). */
+.panda-fab {
+  position: fixed;
+  right: 16px;
+  bottom: calc(108px + env(safe-area-inset-bottom));
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.panda-fab img {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  border: 2px solid #fff;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28);
+  transition: transform 0.08s ease;
+}
+.panda-fab:active img {
+  transform: scale(0.92);
+}
+.panda-fab__label {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+}
+.panda-fab:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/* --- Outils de l'éditeur de page --- */
+.editor__tools {
+  display: flex;
+  gap: 10px;
+  padding: 10px 20px 0;
+}
+.editor__tools .btn-secondary {
+  flex: 1;
+  font-size: 13px;
+  padding: 10px 8px;
+  white-space: nowrap;
+}
+
+/* --- Panda de fin de scan 🐼 --- */
+.celebrate {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  background: rgba(255, 255, 255, 0.96);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  animation: fadein 0.25s ease;
+}
+.celebrate[hidden] {
+  display: none;
+}
+.celebrate__brand {
+  font-weight: 800;
+  font-size: 30px;
+  letter-spacing: -0.02em;
+}
+.celebrate__panda {
+  width: 150px;
+  height: 150px;
+  border-radius: 50%;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15);
+}
+@keyframes fadein {
+  from { opacity: 0; }
+}
+.done__panda {
+  width: 92px;
+  height: 92px;
+  border-radius: 50%;
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.14);
+}
+
 /* --- Toast : message furtif non bloquant --- */
 .toast {
   position: fixed;
@@ -1308,7 +1333,7 @@ button.upload-link:disabled {
   animation: pulse 1s ease-in-out 3;
 }
 .pages--locked .pages__list,
-.pages--locked .pages__cachet,
+.pages--locked .panda-fab,
 .pages--locked .ocr-toggle,
 .pages--locked #btn-add-page {
   pointer-events: none;

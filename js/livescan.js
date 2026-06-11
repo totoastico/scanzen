@@ -81,7 +81,7 @@ function detectTick(videoEl, gen) {
   } catch (e) {
     // une analyse ratée ne doit jamais casser la caméra
   }
-  timer = setTimeout(() => detectTick(videoEl, gen), 180);
+  timer = setTimeout(() => detectTick(videoEl, gen), 150);
 }
 
 function detectStep(videoEl) {
@@ -89,8 +89,8 @@ function detectStep(videoEl) {
   const vh = videoEl.videoHeight;
   if (!vw || !vh) return; // flux pas encore prêt
 
-  // Photo réduite du flux (480 px : bon équilibre précision / vitesse).
-  const w = 480;
+  // Photo réduite du flux (640 px : coins précis, analyse encore rapide).
+  const w = 640;
   const h = Math.max(1, Math.round((vh * w) / vw));
   sample.width = w;
   sample.height = h;
@@ -110,12 +110,18 @@ function detectStep(videoEl) {
   }
 }
 
+// Le cadre actuellement détecté (en pixels VIDÉO), ou null. Utilisé au
+// moment du déclic : "ce que tu vois est ce que tu obtiens".
+export function getCurrentQuad() {
+  return target ? JSON.parse(JSON.stringify(target)) : null;
+}
+
 // --- Boucle de dessin : le cadre GLISSE vers la dernière détection,
 //     à chaque image écran → mouvement fluide, plus de saccades. ---
 function drawTick(videoEl, overlayEl, gen) {
   if (!running || gen !== generation) return;
   if (target) {
-    smooth = smooth ? lerpCorners(smooth, target, 0.18) : target;
+    smooth = smooth ? lerpCorners(smooth, target, 0.22) : target;
   } else {
     smooth = null;
   }
@@ -149,12 +155,23 @@ function draw(videoEl, overlayEl) {
   ctx.fill();
   ctx.globalCompositeOperation = "source-over";
 
-  // …et le cadre bleu par-dessus.
+  // …le cadre bleu par-dessus…
   ctx.strokeStyle = "#2563eb";
   ctx.lineWidth = 3;
   ctx.lineJoin = "round";
   tracePath(ctx, pts);
   ctx.stroke();
+
+  // …et les 4 points de coins (comme les poignées de l'écran de rognage).
+  for (const [x, y] of pts) {
+    ctx.beginPath();
+    ctx.arc(x, y, 7, 0, Math.PI * 2);
+    ctx.fillStyle = "#fff";
+    ctx.fill();
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = "#2563eb";
+    ctx.stroke();
+  }
 }
 
 function tracePath(ctx, pts) {

@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">
+  <!-- Petit panda zen de Scanzen : assis en tailleur, pull moutarde,
+       yeux fermés — dessiné d'après l'illustration de Thomas. -->
+  <defs>
+    <clipPath id="round"><circle cx="100" cy="100" r="100"/></clipPath>
+  </defs>
+  <g clip-path="url(#round)">
+    <!-- fond papier kraft -->
+    <rect width="200" height="200" fill="#e9dabd"/>
+    <circle cx="58" cy="120" r="34" fill="#dcc69e" opacity="0.55"/>
+    <circle cx="146" cy="128" r="28" fill="#dcc69e" opacity="0.5"/>
+    <!-- brins d'herbe -->
+    <path d="M30 158 q2 -8 5 -10 M35 158 q1 -6 4 -8" stroke="#c8b186" stroke-width="2.4" fill="none" stroke-linecap="round"/>
+    <path d="M166 156 q2 -8 5 -10 M171 156 q1 -6 4 -8" stroke="#c8b186" stroke-width="2.4" fill="none" stroke-linecap="round"/>
+
+    <!-- jambes croisées -->
+    <path d="M40 160 q4 -18 30 -22 l60 0 q26 4 30 22 q3 9 -9 11 l-102 0 q-12 -2 -9 -11 z" fill="#33302e"/>
+    <!-- corps : pull moutarde -->
+    <path d="M61 150 q-4 -40 39 -42 q43 2 39 42 z" fill="#c8862e"/>
+    <path d="M61 150 q-4 -40 39 -42 q43 2 39 42 z" fill="#b97a24" opacity="0.25" transform="translate(4 2) scale(0.96)"/>
+    <!-- pattes jointes au centre -->
+    <ellipse cx="92" cy="135" rx="9.5" ry="14" fill="#33302e" transform="rotate(8 92 135)"/>
+    <ellipse cx="108" cy="135" rx="9.5" ry="14" fill="#33302e" transform="rotate(-8 108 135)"/>
+    <!-- pieds -->
+    <ellipse cx="84" cy="164" rx="12" ry="8" fill="#3c3936"/>
+    <ellipse cx="116" cy="164" rx="12" ry="8" fill="#3c3936"/>
+
+    <!-- oreilles -->
+    <circle cx="57" cy="52" r="17" fill="#33302e"/>
+    <circle cx="143" cy="52" r="17" fill="#33302e"/>
+    <!-- tête -->
+    <ellipse cx="100" cy="80" rx="54" ry="46" fill="#f7f0e3"/>
+    <!-- taches des yeux -->
+    <ellipse cx="75" cy="82" rx="17" ry="21" fill="#33302e" transform="rotate(-14 75 82)"/>
+    <ellipse cx="125" cy="82" rx="17" ry="21" fill="#33302e" transform="rotate(14 125 82)"/>
+    <!-- yeux fermés, sereins -->
+    <path d="M68 82 q7 6 14 0" stroke="#f7f0e3" stroke-width="3.4" fill="none" stroke-linecap="round"/>
+    <path d="M118 82 q7 6 14 0" stroke="#f7f0e3" stroke-width="3.4" fill="none" stroke-linecap="round"/>
+    <!-- museau -->
+    <path d="M95 99 l10 0 q1 0 0.6 1.2 l-4.2 4.6 q-1.4 1.4 -2.8 0 l-4.2 -4.6 q-0.4 -1.2 0.6 -1.2 z" fill="#33302e"/>
+    <path d="M100 105 l0 4" stroke="#33302e" stroke-width="2" stroke-linecap="round"/>
+  </g>
+</svg>

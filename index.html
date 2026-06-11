@@ -30,31 +30,18 @@
        ========================================================= -->
   <section class="screen screen--active" id="screen-home">
     <div class="home">
-      <!-- Deux entrées : scanner un document, ou traiter un contrat (cachet).
-           Chaque bulle propose photo (le gros bouton) ou téléversement. -->
-      <div class="home-choice">
-        <button class="bubble" id="btn-scan" type="button">
-          <span class="bubble__title">Scanner</span>
-          <span class="bubble__sub">Document → PDF</span>
-        </button>
-        <label class="upload-link">
-          <span class="upload-link__icon">⤓</span> Téléverser (image ou PDF)
-          <input type="file" id="file-input" accept="image/*,application/pdf" multiple hidden />
-        </label>
-      </div>
+      <!-- LE bouton : un seul parcours pour tout (scan, puis PDF ou cachet). -->
+      <button class="scan-button" id="btn-scan" type="button">
+        SkanZen
+      </button>
 
-      <div class="home-choice">
-        <button class="bubble bubble--accent" id="btn-cachet-home" type="button">
-          <span class="bubble__title">Cachet</span>
-          <span class="bubble__sub">Contrat → Drive + feuille</span>
-        </button>
-        <label class="upload-link">
-          <span class="upload-link__icon">⤓</span> Téléverser un contrat
-          <input type="file" id="cachet-file-input" accept="image/*,application/pdf" multiple hidden />
-        </label>
-      </div>
+      <!-- Option discrète : importer des images ou des PDF existants -->
+      <label class="upload-link">
+        <span class="upload-link__icon">⤓</span> Téléverser (image ou PDF)
+        <input type="file" id="file-input" accept="image/*,application/pdf" multiple hidden />
+      </label>
 
-      <span class="brand">scanzen</span>
+      <span class="brand">Skanzen</span>
     </div>
   </section>
 
@@ -79,8 +66,9 @@
     <!-- Éclair blanc bref à chaque capture (feedback visuel) -->
     <div class="camera__flash" id="camera-flash"></div>
 
-    <!-- Mode cachet : consigne (avant la 1re page) puis vignettes des pages prises -->
-    <p class="camera__hint" id="camera-hint" hidden>Photographie chaque page du lot, puis « Terminer »</p>
+    <!-- Consigne (avant la 1re page) puis vignettes des pages prises
+         (taper une vignette = ouvrir l'éditeur de cette page) -->
+    <p class="camera__hint" id="camera-hint" hidden>Photographie chaque page, puis « Terminer »</p>
     <div class="camera__strip" id="camera-strip" hidden></div>
 
     <!-- Barre du bas : bouton de capture (dominant) -->
@@ -92,21 +80,6 @@
     <div class="camera__error" id="camera-error" hidden>
       <p id="camera-error-text">Impossible d'accéder à la caméra.</p>
       <button class="btn-secondary btn-secondary--light" id="btn-camera-back" type="button">Retour</button>
-    </div>
-  </section>
-
-  <!-- =========================================================
-       ÉCRAN APERÇU
-       Montre la photo capturée. "Reprendre" relance la caméra,
-       "Continuer" mènera au recadrage (étape 3).
-       ========================================================= -->
-  <section class="screen screen--preview" id="screen-preview">
-    <div class="preview">
-      <img class="preview__image" id="preview-image" alt="Photo capturée" />
-    </div>
-    <div class="preview__actions">
-      <button class="btn-secondary btn-secondary--light" id="btn-retake" type="button">Reprendre</button>
-      <button class="btn-primary" id="btn-use" type="button">Continuer</button>
     </div>
   </section>
 
@@ -124,7 +97,7 @@
     </div>
 
     <div class="crop__actions">
-      <button class="btn-secondary btn-secondary--light" id="btn-crop-back" type="button">Reprendre</button>
+      <button class="btn-secondary btn-secondary--light" id="btn-crop-back" type="button">Annuler</button>
       <button class="btn-primary" id="btn-crop-confirm" type="button">Valider</button>
     </div>
 
@@ -137,9 +110,10 @@
   </section>
 
   <!-- =========================================================
-       ÉCRAN RÉSULTAT (provisoire)
-       Montre la page redressée. Les filtres (étape 4) et l'ajout
-       à la liste (étape 5) viendront se greffer ici.
+       ÉCRAN ÉDITEUR DE PAGE
+       S'ouvre en tapant une vignette (caméra ou liste). On peut :
+       pivoter, changer d'effet (aplanissement de l'éclairage),
+       réajuster les coins du rognage, ou reprendre la photo.
        ========================================================= -->
   <section class="screen screen--result" id="screen-result">
     <div class="preview">
@@ -149,16 +123,22 @@
       <button class="edge-btn edge-btn--right" id="btn-rotate-right" type="button" aria-label="Pivoter à droite">↻</button>
     </div>
 
-    <!-- Choix du rendu "scan" appliqué à la page redressée -->
+    <!-- Choix du rendu "scan" (aplanissement de l'éclairage) -->
     <div class="filters" id="filters">
       <button class="filter-btn" type="button" data-filter="original">Original</button>
       <button class="filter-btn" type="button" data-filter="auto">Auto</button>
       <button class="filter-btn" type="button" data-filter="bw">Noir &amp; blanc</button>
     </div>
 
+    <!-- Outils : réajuster le rognage / refaire la photo -->
+    <div class="editor__tools">
+      <button class="btn-secondary btn-secondary--light" id="btn-adjust-corners" type="button">⌗ Ajuster les coins</button>
+      <button class="btn-secondary btn-secondary--light" id="btn-result-retake" type="button">📷 Reprendre cette photo</button>
+    </div>
+
     <div class="preview__actions">
-      <button class="btn-secondary btn-secondary--light" id="btn-result-retake" type="button">Reprendre</button>
-      <button class="btn-primary" id="btn-add-to-list" type="button">Ajouter</button>
+      <button class="btn-secondary btn-secondary--light" id="btn-edit-cancel" type="button">Annuler</button>
+      <button class="btn-primary" id="btn-add-to-list" type="button">OK</button>
     </div>
   </section>
 
@@ -180,11 +160,12 @@
       <span>Texte sélectionnable (OCR, français — plus lent)</span>
     </label>
 
-    <!-- Raccourci discret : envoyer ces pages dans le parcours cachet
-         (utile quand un contrat a été pris via le scanner). -->
-    <div class="pages__cachet">
-      <button class="upload-link" id="btn-cachet" type="button">🎙️ Classer ces pages en cachet</button>
-    </div>
+    <!-- Le bouton PANDA (rond, côté pouce) : envoie ces pages dans
+         l'analyse cachet (contrats → Drive + feuille). -->
+    <button class="panda-fab" id="btn-cachet" type="button" aria-label="Analyser ces pages en cachet (contrat)">
+      <img src="icons/panda.svg" alt="" />
+      <span class="panda-fab__label">Cachet</span>
+    </button>
 
     <div class="pages__actions">
       <button class="btn-secondary" id="btn-add-page" type="button">+ Ajouter une page</button>
@@ -300,7 +281,7 @@
       <span class="step" data-step="envoi">Envoi</span>
     </nav>
     <div class="done">
-      <span class="done__check">✓</span>
+      <img class="done__panda" src="icons/panda.svg" alt="" />
       <h2 class="done__title" id="done-title">…</h2>
       <p class="done__sub">Rangé dans Drive + ajouté à la feuille.</p>
       <ul class="done__list" id="done-list"></ul>
@@ -352,6 +333,12 @@
 
   <!-- Petit message furtif non bloquant (ex. « Contrat 1/3 envoyé ✓ ») -->
   <div class="toast" id="toast" role="status"></div>
+
+  <!-- Petit panda de fin de scan 🐼 -->
+  <div class="celebrate" id="celebrate" hidden>
+    <span class="celebrate__brand">Scanzen</span>
+    <img class="celebrate__panda" src="icons/panda.svg" alt="" />
+  </div>
 
   <!-- type="module" : permet d'utiliser import/export entre nos fichiers JS -->
   <script type="module" src="js/app.js"></script>

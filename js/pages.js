@@ -1,11 +1,18 @@
 // ===================================================================
 // pages.js — la liste des pages scannées.
-//   - ajouter une page (à la fin)
-//   - supprimer une page
-//   - réordonner (monter / descendre)
 //
-// Chaque page est une image au format data URL (déjà redressée +
-// filtrée). C'est cette liste que l'export PDF (étape 6) utilisera.
+// Chaque page est un OBJET complet, pour pouvoir la retravailler dans
+// l'éditeur (revenir aux coins, pivoter, changer d'effet…) :
+//   {
+//     original : la photo brute (data URL) — on ne la perd jamais
+//     flat     : la page rognée/redressée, AVANT rotation et filtre
+//                (c'est la base de travail de l'éditeur)
+//     display  : l'image affichée/exportée (flat + rotation + filtre)
+//     corners  : les 4 coins du rognage appliqué (ou null = pas de rognage)
+//     rotation : rotation appliquée (0/90/180/270)
+//     filter   : effet appliqué ("original" / "auto" / "bw")
+//   }
+// C'est `display` que l'export PDF et l'analyse cachet consomment.
 // ===================================================================
 
 const pages = [];
@@ -17,15 +24,49 @@ const cachetShortcut = document.getElementById("btn-cachet");
 
 // --- Fonctions utilisées par app.js ---
 
-// Ajoute une page à la fin de la liste.
-export function addPage(dataUrl) {
-  pages.push(dataUrl);
+// Ajoute une page. Accepte une simple data URL (téléversement) ou un
+// objet déjà construit. Renvoie l'objet page (référence stable).
+export function addPage(p) {
+  const page =
+    typeof p === "string"
+      ? { original: p, flat: p, display: p, corners: null, rotation: 0, filter: "original" }
+      : {
+          original: p.original,
+          flat: p.flat || p.display || p.original,
+          display: p.display || p.original,
+          corners: p.corners || null,
+          rotation: p.rotation || 0,
+          filter: p.filter || "original",
+        };
+  pages.push(page);
   render();
+  return page;
 }
 
-// Renvoie une copie du tableau des pages (pour l'export PDF).
+// Renvoie les images affichables (pour le PDF, l'analyse cachet…).
 export function getPages() {
-  return pages.slice();
+  return pages.map((p) => p.display);
+}
+
+// Renvoie l'objet page complet (pour l'éditeur).
+export function getPage(index) {
+  return pages[index] || null;
+}
+
+// Position actuelle d'une page (référence) dans la liste, ou -1.
+export function pageIndex(page) {
+  return pages.indexOf(page);
+}
+
+// Met à jour une page (par référence — l'ordre peut avoir changé entre
+// temps) et redessine la liste.
+export function updatePage(page, patch) {
+  const i = pages.indexOf(page);
+  if (i === -1) return false;
+  Object.assign(page, patch);
+  render();
+  document.dispatchEvent(new CustomEvent("pages-changed"));
+  return true;
 }
 
 // Nombre de pages actuelles.
@@ -68,11 +109,11 @@ function makeButton(label, className, onClick, disabled) {
 }
 
 // Redessine toute la liste à partir du tableau `pages`.
-function render() {
+export function render() {
   const n = pages.length;
   countEl.textContent = n <= 1 ? n + " page" : n + " pages";
   exportBtn.disabled = n === 0; // pas de pages → pas d'export possible
-  cachetShortcut.disabled = n === 0; // idem pour le raccourci cachet
+  cachetShortcut.disabled = n === 0; // idem pour le bouton panda (cachet)
 
   listEl.innerHTML = "";
 
@@ -84,7 +125,7 @@ function render() {
     return;
   }
 
-  pages.forEach((url, i) => {
+  pages.forEach((page, i) => {
     const card = document.createElement("div");
     card.className = "page-card";
 
@@ -94,8 +135,12 @@ function render() {
 
     const thumb = document.createElement("img");
     thumb.className = "page-card__thumb";
-    thumb.src = url;
+    thumb.src = page.display;
     thumb.alt = "Page " + (i + 1);
+    // Taper la vignette ouvre l'éditeur de cette page.
+    thumb.addEventListener("click", () => {
+      document.dispatchEvent(new CustomEvent("page-open", { detail: { index: i } }));
+    });
 
     const controls = document.createElement("div");
     controls.className = "page-card__controls";

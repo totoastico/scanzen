@@ -6,34 +6,33 @@
 // ===================================================================
 
 import { startCamera, stopCamera, capturePhoto } from "./camera.js";
-import { initCrop, cropToCanvas, autoDewarp } from "./scanner.js";
-import { startLiveScan, stopLiveScan } from "./livescan.js";
+import { initCrop, cropToCanvas, getCropCorners, autoDewarp } from "./scanner.js";
+import { startLiveScan, stopLiveScan, getCurrentQuad } from "./livescan.js";
 import { applyFilter } from "./filters.js";
-import { addPage, pageCount, getPages, clearPages } from "./pages.js";
+import { addPage, pageCount, getPages, getPage, pageIndex, updatePage, clearPages } from "./pages.js";
 import { buildPdf, sharePdf } from "./pdf.js";
 import { ocrPage, terminateOcr } from "./ocr.js";
 import { extractFields, buildFilename, isContractStart } from "./contract.js";
 import { pdfToImages, isPdf } from "./pdfimport.js";
 
-// --- État partagé de l'app ---
+// --- État de l'ÉDITEUR de page (écran "résultat") ---
 const state = {
-  capturedImage: null, // photo brute prise par la caméra
-  croppedCanvas: null, // le rognage (canvas plein résolution, avant filtre)
-  filteredImage: null, // rognage + rotation + filtre (ce qui sera ajouté)
-  activeFilter: "auto", // mode de filtre courant
-  rotation: 0, // rotation appliquée au résultat (0, 90, 180, 270)
-  fromImport: false, // la page affichée vient d'un téléversement (pas de la caméra)
+  croppedCanvas: null, // base de travail (page rognée, avant rotation/filtre)
+  filteredImage: null, // base + rotation + filtre (ce qui sera enregistré)
+  activeFilter: "original", // effet courant
+  rotation: 0, // rotation courante (0, 90, 180, 270)
 };
+let editorPage = null;             // la page ouverte dans l'éditeur
+let editorFrom = "screen-pages";   // où revenir en sortant de l'éditeur
+let replacePage = null;            // page à remplacer à la prochaine photo
 
 let pendingPdf = null; // PDF préparé, en attente d'un appui pour le partager
 let pdfGeneration = 0; // change à chaque modif de la liste → invalide un PDF en cours
 const EXPORT_LABEL = "Exporter en PDF";
 
-// --- Mode de la caméra / parcours cachet ---
-let cameraMode = "scan";                  // "scan" (Scanner) ou "cachet" (Contrat)
-let cachetPages = [];                     // images du lot cachet en cours (≠ pages scan)
-let cachetDewarps = [];                   // détourages auto en cours (promesses)
-let cachetReturnScreen = "screen-home";   // où revenir depuis le découpage
+// --- Parcours cachet ---
+let cachetPages = [];                     // images du lot cachet en cours d'analyse
+let pageDewarps = [];                     // détourages auto en cours (promesses)
 let sentFirstPages = new Set();           // contrats déjà envoyés (clé = 1re page) → anti-doublon
 let skippedFirstPages = new Set();        // contrats ignorés volontairement
 let sentLog = [];                         // contrats réellement envoyés : [{ filename }]
@@ -47,11 +46,9 @@ const toComma = (v) => (v == null ? "" : String(v)).replace(".", ",");
 const video = document.getElementById("camera-video");
 const cameraError = document.getElementById("camera-error");
 const cameraErrorText = document.getElementById("camera-error-text");
-const previewImage = document.getElementById("preview-image");
 const resultImage = document.getElementById("result-image");
 const filterButtons = document.querySelectorAll(".filter-btn");
 const exportBtn = document.getElementById("btn-export");
-const resultRetakeBtn = document.getElementById("btn-result-retake");
 
 // ===================================================================
 // Navigation, voile "occupé", toast, fil d'étapes
@@ -124,34 +121,38 @@ function rotateCanvas(canvas, deg) {
 // Caméra (modes scan et cachet)
 // ===================================================================
 
-// En mode cachet : bouton "Terminer (N)", consigne et vignettes des pages.
+// Bouton "Terminer (N)", consigne et vignettes des pages déjà prises.
 function updateCameraDone() {
   const done = document.getElementById("btn-camera-done");
-  if (cameraMode === "cachet") {
-    done.hidden = false;
-    done.disabled = cachetPages.length === 0;
-    done.textContent = `Terminer (${cachetPages.length})`;
-  } else {
-    done.hidden = true;
-  }
-  document.getElementById("camera-hint").hidden =
-    !(cameraMode === "cachet" && cachetPages.length === 0);
-  updateCachetStrip();
+  const n = pageCount();
+  done.hidden = false;
+  done.disabled = n === 0;
+  done.textContent = `Terminer (${n})`;
+  document.getElementById("camera-hint").hidden = n !== 0;
+  updateCameraStrip();
 }
 
-// Reconstruit la bande de vignettes des pages déjà prises (mode cachet).
+// Reconstruit la bande de vignettes (taper une vignette = ouvrir l'éditeur).
 const cameraStrip = document.getElementById("camera-strip");
-function updateCachetStrip() {
-  const show = cameraMode === "cachet" && cachetPages.length > 0;
-  cameraStrip.hidden = !show;
+function updateCameraStrip() {
+  const n = pageCount();
+  cameraStrip.hidden = n === 0;
   cameraStrip.innerHTML = "";
-  if (!show) return;
-  cachetPages.forEach((url, i) => {
+  if (n === 0) return;
+  for (let i = 0; i < n; i++) {
+    const page = getPage(i);
     const img = document.createElement("img");
-    img.src = url;
+    img.src = page.display;
     img.alt = "Page " + (i + 1);
+    img.addEventListener("click", () => {
+      cameraSession++;
+      stopLiveScan(cameraOverlay);
+      stopCamera(video);
+      replacePage = null; // on change de page → on renonce au "Reprendre" en cours
+      openEditor(page, "screen-camera");
+    });
     cameraStrip.appendChild(img);
-  });
+  }
   cameraStrip.scrollLeft = cameraStrip.scrollWidth; // la dernière prise reste visible
 }
 
@@ -181,26 +182,33 @@ async function openCamera() {
   }
 }
 
-// --- Fermer la caméra. En mode cachet : on confirme si des pages ont déjà
-//     été prises (sinon elles seraient perdues), puis retour accueil. Sinon
-//     → liste si pages, sinon accueil. ---
-function closeCamera() {
-  if (cameraMode === "cachet" && cachetPages.length > 0) {
-    const n = cachetPages.length;
-    if (!confirm(`Quitter sans traiter ${n} page${n > 1 ? "s" : ""} ? Elles seront perdues.`)) {
-      return; // l'utilisateur annule → on reste sur la caméra
-    }
+// Attend la fin des détourages automatiques encore en cours (pour que
+// l'export PDF / l'analyse cachet ne partent jamais sur des photos brutes).
+async function flushDewarps() {
+  if (!pageDewarps.length) return;
+  showBusy("Détourage des pages…");
+  try {
+    await Promise.all(pageDewarps);
+  } finally {
+    hideBusy();
   }
+  pageDewarps = [];
+}
+
+// --- Fermer la caméra. Les pages déjà prises restent dans la liste
+//     (rien n'est perdu) → liste si pages, sinon accueil. ---
+async function closeCamera() {
   cameraSession++; // invalide une ouverture encore en cours de démarrage
   stopLiveScan(cameraOverlay);
   stopCamera(video);
-  if (cameraMode === "cachet") {
-    cachetPages = [];
-    cachetDewarps = [];
-    cameraMode = "scan";
-    showScreen("screen-home");
+  if (replacePage) {
+    // On renonçait juste à refaire une photo → retour à l'éditeur.
+    const page = replacePage;
+    replacePage = null;
+    openEditor(page, editorFrom);
     return;
   }
+  await flushDewarps();
   showScreen(pageCount() > 0 ? "screen-pages" : "screen-home");
 }
 
@@ -212,15 +220,6 @@ function describeCameraError(err) {
     return "Aucune caméra détectée sur cet appareil.";
   }
   return "Impossible d'accéder à la caméra. Vérifiez que la page est ouverte en HTTPS ou sur localhost.";
-}
-
-// --- Écran résultat : applique rotation + filtre au rognage ---
-function showResult() {
-  setFilter(state.activeFilter || "auto");
-  // Pour un fichier téléversé, "Reprendre" (la caméra) n'a pas de sens :
-  // on propose plutôt d'ignorer la page.
-  resultRetakeBtn.textContent = state.fromImport ? "Ignorer cette page" : "Reprendre";
-  showScreen("screen-result");
 }
 
 function setFilter(mode) {
@@ -244,24 +243,10 @@ function rotate(delta) {
 // Branchement des boutons
 // ===================================================================
 
-// Accueil → bulle "Scanner" : caméra en mode scan (document → PDF).
-document.getElementById("btn-scan").addEventListener("click", () => {
-  cameraMode = "scan";
-  openCamera();
-});
-
-// Accueil → bulle "Cachet" : caméra en mode cachet (contrat → découpage).
-document.getElementById("btn-cachet-home").addEventListener("click", () => {
-  cameraMode = "cachet";
-  cachetPages = [];
-  cachetDewarps = [];
-  cachetReturnScreen = "screen-home";
-  openCamera();
-});
+// Accueil → "SkanZen" : la caméra (un seul parcours pour tout).
+document.getElementById("btn-scan").addEventListener("click", openCamera);
 
 // --- Téléversement d'images existantes (une ou plusieurs) ---
-let importQueue = [];
-
 function readFileAsDataURL(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -287,29 +272,6 @@ function imageToCanvas(dataUrl) {
   });
 }
 
-// Charge le fichier suivant de la file. Un fichier téléversé est DÉJÀ
-// scanné → on saute le recadrage et on le prend tel quel (image entière),
-// directement à l'écran résultat (filtre / rotation restent disponibles).
-async function startNextImport() {
-  if (!importQueue.length) return;
-  const img = importQueue.shift();
-  state.capturedImage = img;
-  try {
-    state.croppedCanvas = await imageToCanvas(img);
-  } catch (e) {
-    console.error(e);
-    showToast("Un fichier n'a pas pu être ouvert.", 4000);
-    if (importQueue.length) startNextImport();
-    // fin du lot sur un échec : ne pas rester sur un écran résultat périmé
-    else showScreen(pageCount() > 0 ? "screen-pages" : "screen-home");
-    return;
-  }
-  state.rotation = 0;
-  state.activeFilter = "original"; // déjà scanné → on n'altère rien par défaut
-  state.fromImport = true;
-  showResult();
-}
-
 // Transforme les fichiers choisis (images et/ou PDF) en une liste d'images.
 // Un PDF est rendu page par page. Word/.docx non géré.
 async function filesToImages(files) {
@@ -330,38 +292,19 @@ async function filesToImages(files) {
   return images;
 }
 
-// Accueil → "Scanner > Téléverser" : images/PDF → parcours scan (sans rognage).
+// Accueil → "Téléverser" : images/PDF déjà scannés → directement la liste
+// (pas de rognage : un fichier importé est déjà propre).
 document.getElementById("file-input").addEventListener("change", async (e) => {
   const files = Array.from(e.target.files || []);
   e.target.value = ""; // permet de re-sélectionner les mêmes fichiers
   if (!files.length) return;
-  cameraMode = "scan"; // le "Reprendre" de l'écran résultat doit rester en mode scan
   try {
     const images = await filesToImages(files);
     hideBusy();
     if (!images.length) return;
-    importQueue = images;
-  } catch (err) {
-    hideBusy();
-    console.error(err);
-    showToast("Impossible de lire ce fichier. " + (err.message || ""), 4500);
-    return;
-  }
-  startNextImport();
-});
-
-// Accueil → "Cachet > Téléverser" : images/PDF → DIRECTEMENT le découpage
-// (pas de rognage, pas d'écran filtre).
-document.getElementById("cachet-file-input").addEventListener("change", async (e) => {
-  const files = Array.from(e.target.files || []);
-  e.target.value = "";
-  if (!files.length) return;
-  try {
-    const images = await filesToImages(files);
-    hideBusy();
-    if (!images.length) return;
-    cachetReturnScreen = "screen-home";
-    await startCachetFlow(images);
+    images.forEach((u) => addPage(u));
+    invalidatePendingPdf();
+    showScreen("screen-pages");
   } catch (err) {
     hideBusy();
     console.error(err);
@@ -371,118 +314,8 @@ document.getElementById("cachet-file-input").addEventListener("change", async (e
 
 document.getElementById("btn-close-camera").addEventListener("click", closeCamera);
 document.getElementById("btn-camera-back").addEventListener("click", closeCamera);
-// Échec de chargement du moteur de détection → retour caméra (pas de cul-de-sac)
-document.getElementById("btn-crop-loading-back").addEventListener("click", openCamera);
-
-// Caméra → capturer.
-//  - mode scan  : aperçu → recadrage → filtre → liste.
-//  - mode cachet: on accumule la page (sans rognage) et on reste sur la
-//    caméra pour la page suivante ; "Terminer" lance le découpage.
-document.getElementById("btn-capture").addEventListener("click", () => {
-  const img = capturePhoto(video);
-  if (cameraMode === "cachet") {
-    const idx = cachetPages.length;
-    cachetPages.push(img);
-    // Détourage automatique en arrière-plan : le cadre détecté à la
-    // prise devient le rognage de la page (le déclencheur reste instantané).
-    const job = autoDewarp(img)
-      .then((r) => {
-        if (cachetPages[idx] === img) {
-          cachetPages[idx] = r.dataUrl;
-          // met à jour SA vignette, sans reconstruire la bande (qui
-          // sauterait sous le doigt de l'utilisateur)
-          const cell = cameraStrip.children[idx];
-          if (cell) cell.src = r.dataUrl;
-        }
-      })
-      .catch(() => {}); // détourage raté → on garde la photo entière
-    cachetDewarps.push(job);
-    // petit éclair blanc : confirme visuellement la prise
-    const flash = document.getElementById("camera-flash");
-    flash.classList.remove("is-on");
-    void flash.offsetWidth; // relance l'animation
-    flash.classList.add("is-on");
-    updateCameraDone();
-    return;
-  }
-  state.capturedImage = img;
-  state.activeFilter = "auto"; // photo → filtre "Auto" par défaut (≠ téléversement)
-  state.fromImport = false;
-  previewImage.src = img;
-  stopLiveScan(cameraOverlay);
-  stopCamera(video);
-  showScreen("screen-preview");
-});
-
-// Caméra (mode cachet) → "Terminer" : attend la fin des détourages
-// automatiques, puis lance le découpage des pages prises.
-let cachetDoneRunning = false; // anti double-déclenchement (Entrée clavier…)
-document.getElementById("btn-camera-done").addEventListener("click", async () => {
-  if (cachetDoneRunning || cachetPages.length === 0) return;
-  cachetDoneRunning = true;
-  try {
-    cameraSession++;
-    stopLiveScan(cameraOverlay);
-    stopCamera(video);
-    if (cachetDewarps.length) {
-      showBusy("Détourage des pages…");
-      try {
-        await Promise.all(cachetDewarps);
-      } finally {
-        hideBusy();
-      }
-      cachetDewarps = [];
-    }
-    cachetReturnScreen = "screen-home";
-    await startCachetFlow(cachetPages.slice());
-  } finally {
-    cachetDoneRunning = false;
-  }
-});
-
-// Aperçu → "Reprendre"
-document.getElementById("btn-retake").addEventListener("click", openCamera);
-
-// Aperçu → "Continuer" : recadrage
-document.getElementById("btn-use").addEventListener("click", async () => {
-  showScreen("screen-crop");
-  await initCrop(state.capturedImage);
-});
-
-// Recadrage → "Reprendre"
-document.getElementById("btn-crop-back").addEventListener("click", openCamera);
-
-// Recadrage → "Valider"
-document.getElementById("btn-crop-confirm").addEventListener("click", () => {
-  try {
-    state.croppedCanvas = cropToCanvas();
-    state.rotation = 0;
-    showResult();
-  } catch (e) {
-    console.error(e);
-    showToast("Le redressement a échoué. Essaie de réajuster les coins.", 4500);
-  }
-});
-
-// Filtres + rotation
-filterButtons.forEach((b) =>
-  b.addEventListener("click", () => setFilter(b.dataset.filter))
-);
-document.getElementById("btn-rotate-left").addEventListener("click", () => rotate(-90));
-document.getElementById("btn-rotate-right").addEventListener("click", () => rotate(90));
-
-// Résultat → "Reprendre" (photo) ou "Ignorer cette page" (téléversement)
-resultRetakeBtn.addEventListener("click", () => {
-  if (state.fromImport) {
-    if (importQueue.length) {
-      startNextImport(); // page suivante du lot téléversé
-      return;
-    }
-    showScreen(pageCount() > 0 ? "screen-pages" : "screen-home");
-    return;
-  }
-  openCamera();
-});
+// Échec de chargement du moteur de détection → retour à l'éditeur (pas de cul-de-sac)
+document.getElementById("btn-crop-loading-back").addEventListener("click", () => showScreen("screen-result"));
 
 // Le contenu de la liste a changé → l'éventuel PDF préparé n'est plus valable.
 function invalidatePendingPdf() {
@@ -494,19 +327,177 @@ function invalidatePendingPdf() {
 // Suppressions / réordonnancements faits dans pages.js
 document.addEventListener("pages-changed", invalidatePendingPdf);
 
-// Résultat → "Ajouter" : ajoute la page à la liste
-document.getElementById("btn-add-to-list").addEventListener("click", () => {
-  addPage(state.filteredImage);
+// Caméra → capturer : chaque déclic ajoute une page AUTO-ROGNÉE.
+// Le cadre détecté par la visée AU MOMENT du déclic sert de rognage
+// ("ce que tu vois est ce que tu obtiens") ; le détourage tourne en
+// arrière-plan, le déclencheur reste instantané.
+document.getElementById("btn-capture").addEventListener("click", () => {
+  // caméra coupée ou pas encore prête → pas de photo fantôme
+  if (!video.srcObject || !video.videoWidth) return;
+  const img = capturePhoto(video);
+  const hint = getCurrentQuad(); // le cadre de la visée à cet instant
+
+  // petit éclair blanc : confirme visuellement la prise
+  const flash = document.getElementById("camera-flash");
+  flash.classList.remove("is-on");
+  void flash.offsetWidth; // relance l'animation
+  flash.classList.add("is-on");
+
+  // Cas "Reprendre cette photo" (depuis l'éditeur) : la nouvelle photo
+  // REMPLACE la page, sans toucher au reste de la liste.
+  if (replacePage) {
+    const page = replacePage;
+    replacePage = null;
+    cameraSession++;
+    stopLiveScan(cameraOverlay);
+    stopCamera(video);
+    updatePage(page, { original: img, flat: img, display: img, corners: null, rotation: 0, filter: "original" });
+    showBusy("Détourage…");
+    autoDewarp(img, hint)
+      .then((r) => {
+        if (page.original === img) {
+          updatePage(page, { flat: r.dataUrl, display: r.dataUrl, corners: r.corners });
+        }
+      })
+      .catch(() => {}) // détourage raté → on garde la photo entière
+      .finally(() => {
+        hideBusy();
+        invalidatePendingPdf();
+        openEditor(page, editorFrom);
+      });
+    return;
+  }
+
+  // Cas normal : nouvelle page à la fin de la liste.
+  const page = addPage({ original: img, flat: img, display: img });
+  const job = autoDewarp(img, hint)
+    .then((r) => {
+      // Photo remplacée OU page déjà retravaillée dans l'éditeur entre
+      // temps → on n'écrase pas le travail de l'utilisateur.
+      if (page.original !== img || page.flat !== img || page.display !== img) return;
+      updatePage(page, { flat: r.dataUrl, display: r.dataUrl, corners: r.corners });
+      // met à jour SA vignette sans reconstruire la bande
+      const cell = cameraStrip.children[pageIndex(page)];
+      if (cell) cell.src = r.dataUrl;
+    })
+    .catch(() => {}); // détourage raté → on garde la photo entière
+  pageDewarps.push(job);
   invalidatePendingPdf();
-  if (importQueue.length) startNextImport(); // continuer le lot téléversé
-  else showScreen("screen-pages");
+  updateCameraDone();
 });
 
-// Liste → "+ Ajouter une page"
-document.getElementById("btn-add-page").addEventListener("click", () => {
-  cameraMode = "scan";
+// Caméra → "Terminer" : attend la fin des détourages, puis la liste.
+let cameraDoneRunning = false; // anti double-déclenchement (Entrée clavier…)
+document.getElementById("btn-camera-done").addEventListener("click", async () => {
+  if (cameraDoneRunning || pageCount() === 0) return;
+  cameraDoneRunning = true;
+  try {
+    cameraSession++;
+    replacePage = null; // terminer la session abandonne un "Reprendre" en cours
+    stopLiveScan(cameraOverlay);
+    stopCamera(video);
+    await flushDewarps();
+    showScreen("screen-pages");
+  } finally {
+    cameraDoneRunning = false;
+  }
+});
+
+// ===================================================================
+// Éditeur de page (taper une vignette l'ouvre)
+// ===================================================================
+
+// Ouvre l'éditeur sur une page : on repart de sa base "flat" (rognée,
+// avant rotation/filtre) et on ré-applique ses réglages enregistrés.
+let editorSeq = 0; // si deux ouvertures se chevauchent, seule la dernière gagne
+let pendingCrop = null; // rognage refait, en attente du "OK" (Annuler l'oublie)
+async function openEditor(page, from) {
+  if (!page) return;
+  const seq = ++editorSeq;
+  const canvas = await imageToCanvas(page.flat);
+  if (seq !== editorSeq) return; // une ouverture plus récente a pris la main
+  editorPage = page;
+  editorFrom = from;
+  pendingCrop = null;
+  state.croppedCanvas = canvas;
+  state.rotation = page.rotation || 0;
+  setFilter(page.filter || "original");
+  showScreen("screen-result");
+}
+
+// Quitte l'éditeur : retour à la caméra ou à la liste.
+function leaveEditor() {
+  editorPage = null;
+  if (editorFrom === "screen-camera") openCamera();
+  else showScreen(pageCount() > 0 ? "screen-pages" : "screen-home");
+}
+
+// Liste → taper une vignette
+document.addEventListener("page-open", (e) => openEditor(getPage(e.detail.index), "screen-pages"));
+
+// Filtres + rotation
+filterButtons.forEach((b) =>
+  b.addEventListener("click", () => setFilter(b.dataset.filter))
+);
+document.getElementById("btn-rotate-left").addEventListener("click", () => rotate(-90));
+document.getElementById("btn-rotate-right").addEventListener("click", () => rotate(90));
+
+// Éditeur → "Ajuster les coins" : écran de rognage sur la photo D'ORIGINE,
+// en repartant des coins actuels (ou de ceux déjà refaits, en attente).
+document.getElementById("btn-adjust-corners").addEventListener("click", async () => {
+  if (!editorPage) return;
+  showScreen("screen-crop");
+  await initCrop(editorPage.original, (pendingCrop && pendingCrop.corners) || editorPage.corners);
+});
+
+// Rognage → "Annuler" : retour à l'éditeur sans rien changer.
+document.getElementById("btn-crop-back").addEventListener("click", () => showScreen("screen-result"));
+
+// Rognage → "Valider" : nouveau redressement, EN ATTENTE (il ne sera
+// vraiment enregistré qu'au "OK" de l'éditeur — Annuler l'oublie).
+document.getElementById("btn-crop-confirm").addEventListener("click", () => {
+  try {
+    const canvas = cropToCanvas();
+    state.croppedCanvas = canvas;
+    pendingCrop = {
+      flat: canvas.toDataURL("image/jpeg", 0.95),
+      corners: getCropCorners(),
+    };
+    setFilter(state.activeFilter);
+    showScreen("screen-result");
+  } catch (e) {
+    console.error(e);
+    showToast("Le redressement a échoué. Essaie de réajuster les coins.", 4500);
+  }
+});
+
+// Éditeur → "Reprendre cette photo" : la prochaine photo remplace CETTE page.
+document.getElementById("btn-result-retake").addEventListener("click", () => {
+  if (!editorPage) return;
+  replacePage = editorPage;
   openCamera();
 });
+
+// Éditeur → "OK" : enregistre tout d'un coup (rognage en attente compris).
+document.getElementById("btn-add-to-list").addEventListener("click", () => {
+  if (editorPage) {
+    updatePage(editorPage, {
+      ...(pendingCrop || {}),
+      display: state.filteredImage,
+      rotation: state.rotation,
+      filter: state.activeFilter,
+    });
+    pendingCrop = null;
+    invalidatePendingPdf();
+  }
+  leaveEditor();
+});
+
+// Éditeur → "Annuler" : ne change rien.
+document.getElementById("btn-edit-cancel").addEventListener("click", leaveEditor);
+
+// Liste → "+ Ajouter une page"
+document.getElementById("btn-add-page").addEventListener("click", openCamera);
 
 // ===================================================================
 // Export PDF (parcours scan)
@@ -525,14 +516,29 @@ function lockPagesScreen(on) {
   document.getElementById("screen-pages").classList.toggle("pages--locked", on);
 }
 
+// Petit panda de fin de scan 🐼 (avec "Scanzen" au-dessus).
+function celebrate() {
+  const c = document.getElementById("celebrate");
+  c.hidden = false;
+  clearTimeout(celebrate._t);
+  celebrate._t = setTimeout(() => {
+    c.hidden = true;
+  }, 2200);
+}
+// taper le panda le fait disparaître tout de suite
+document.getElementById("celebrate").addEventListener("click", () => {
+  document.getElementById("celebrate").hidden = true;
+});
+
 // Après un export réussi : on vide la liste (le scan est terminé) et on
-// revient à l'accueil.
+// revient à l'accueil — avec le panda.
 function finishExport() {
   pendingPdf = null;
   exportBtn.textContent = EXPORT_LABEL;
   exportBtn.classList.remove("btn-primary--ready");
   clearPages();
   showScreen("screen-home");
+  celebrate();
 }
 
 // Liste → "Exporter en PDF"
@@ -544,6 +550,7 @@ exportBtn.addEventListener("click", async () => {
     return; // annulé → on garde le PDF pour réessayer
   }
 
+  await flushDewarps(); // au cas où des détourages traînent encore
   const pages = getPages();
   if (pages.length === 0) return;
   const ocr = ocrToggle.checked;
@@ -819,10 +826,8 @@ async function startCachetFlow(images) {
     hideBusy();
   }
   if (!ok) {
-    // Annulé : retour à la caméra cachet (les pages sont conservées) ou
-    // à l'écran d'origine.
-    if (cameraMode === "cachet") openCamera();
-    else showScreen(cachetReturnScreen);
+    // Annulé : retour à la liste (les pages sont conservées).
+    showScreen("screen-pages");
     return;
   }
   buildInitialGroups();
@@ -836,10 +841,12 @@ async function startCachetFlow(images) {
   }
 }
 
-// Liste (parcours scan) → "Classer ces pages en cachet".
+// Liste → bouton PANDA : envoie les pages dans l'analyse cachet.
 cachetBtn.addEventListener("click", async () => {
   if (pageCount() === 0) return;
-  cachetReturnScreen = "screen-pages";
+  // export PDF en cours → on ne lance pas deux gros traitements à la fois
+  if (document.getElementById("screen-pages").classList.contains("pages--locked")) return;
+  await flushDewarps(); // si des détourages traînent encore, on les attend
   await startCachetFlow(getPages());
 });
 
@@ -1033,17 +1040,14 @@ function leaveCachetFlow() {
   const total = cachetContracts.length;
   const handled = sentFirstPages.size + skippedFirstPages.size;
   const unsentRemain = total === 0 || handled < total; // 0 = découpage pas encore validé
-  if (cachetReturnScreen === "screen-home" && cachetPages.length > 0 && unsentRemain) {
-    const msg = sentLog.length > 0
-      ? "Abandonner les contrats restants (non envoyés) ?"
-      : `Abandonner ces ${cachetPages.length} page${cachetPages.length > 1 ? "s" : ""} ?`;
-    if (!confirm(msg)) return;
+  // Après un envoi PARTIEL, quitter abandonne les contrats restants → on confirme.
+  if (sentLog.length > 0 && unsentRemain) {
+    if (!confirm("Abandonner les contrats restants (non envoyés) ?")) return;
   }
   cachetPages = [];
   cachetContracts = [];
   cachetItems = [];
   cachetGroups = [];
-  cameraMode = "scan";
   if (sentLog.length > 0) {
     // Quelque chose a bien été envoyé → récapitulatif plutôt que silence.
     renderDone();
@@ -1051,7 +1055,7 @@ function leaveCachetFlow() {
     showScreen("screen-done");
     return;
   }
-  showScreen(cachetReturnScreen);
+  showScreen("screen-pages");
 }
 
 document.getElementById("btn-split-back").addEventListener("click", leaveCachetFlow);
@@ -1064,15 +1068,14 @@ document.getElementById("btn-split-confirm").addEventListener("click", () => {
 // sinon simple retour à l'écran d'origine (rien n'est effacé).
 function finishCachet() {
   const sentSomething = sentLog.length > 0;
-  // On ne vide la liste scan QUE si elle était la source ET qu'on a envoyé.
-  if (sentSomething && cachetReturnScreen === "screen-pages") clearPages();
+  // On ne vide la liste de scans QUE si quelque chose a bien été envoyé.
+  if (sentSomething) clearPages();
   cachetPages = [];
-  cameraMode = "scan";
   pendingPdf = null;
   exportBtn.textContent = EXPORT_LABEL;
   exportBtn.classList.remove("btn-primary--ready");
   if (!sentSomething) {
-    showScreen(cachetReturnScreen); // ex. tout a été "ignoré" → pages conservées
+    showScreen("screen-pages"); // ex. tout a été "ignoré" → pages conservées
     return;
   }
   renderDone();
@@ -1350,8 +1353,8 @@ window.addEventListener("popstate", () => {
 });
 function goBackFrom(id) {
   if (id === "screen-camera") closeCamera();
-  else if (id === "screen-preview" || id === "screen-crop") openCamera();
-  else if (id === "screen-result") resultRetakeBtn.click();
+  else if (id === "screen-crop") showScreen("screen-result"); // rognage → éditeur
+  else if (id === "screen-result") document.getElementById("btn-edit-cancel").click();
   else if (id === "screen-pages") showScreen("screen-home"); // les pages restent en mémoire
   else if (id === "screen-split") leaveCachetFlow();
   else if (id === "screen-contract") document.getElementById("btn-cachet-back").click();

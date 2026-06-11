@@ -6,7 +6,7 @@
 // bascule sur le cache que si tu es hors-ligne.
 // ===================================================================
 
-const CACHE = "scanzen-v10";
+const CACHE = "scanzen-v11";
 
 const SHELL = [
   "./",
@@ -25,6 +25,7 @@ const SHELL = [
   "./manifest.webmanifest",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
+  "./icons/panda.svg",
 ];
 
 self.addEventListener("install", (event) => {

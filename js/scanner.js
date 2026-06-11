@@ -221,12 +221,15 @@ function detectQuad(src, pass) {
   }
 }
 
-// Trois tentatives, de la plus stricte à la plus permissive. La plupart
-// des photos s'arrêtent à la 1re (le coût reste donc inchangé).
+// Tentatives de la plus stricte à la plus permissive. La plupart des
+// photos s'arrêtent à la 1re (le coût reste donc inchangé). La dernière
+// accepte un document ÉLOIGNÉ (photo prise de loin : la feuille ne
+// couvre qu'une petite partie de l'image).
 const DETECT_PASSES = [
   { cannyLo: 50, cannyHi: 150, minAreaPct: 0.2 },   // standard
   { cannyLo: 25, cannyHi: 80, minAreaPct: 0.15 },   // bords peu contrastés
   { otsu: true, minAreaPct: 0.15 },                 // feuille claire sur fond uni
+  { cannyLo: 50, cannyHi: 150, minAreaPct: 0.06 },  // document loin dans le cadre
 ];
 
 // Détection "stricte" : renvoie le quadrilatère du document, ou null si
@@ -387,7 +390,9 @@ window.addEventListener("resize", updatePositions);
 
 // --- Fonctions utilisées par app.js --------------------------------
 
-export async function initCrop(imageDataUrl) {
+// presetCorners (optionnel) : repart des coins déjà choisis (éditeur)
+// au lieu de relancer la détection automatique.
+export async function initCrop(imageDataUrl, presetCorners) {
   const loadingText = document.getElementById("crop-loading-text");
   const loadingBack = document.getElementById("btn-crop-loading-back");
   loadingText.textContent = "Chargement du moteur de détection…";
@@ -404,7 +409,10 @@ export async function initCrop(imageDataUrl) {
       .getContext("2d")
       .drawImage(cropImage, 0, 0, sourceCanvas.width, sourceCanvas.height);
 
-    corners = detectCorners(sourceCanvas);
+    corners =
+      presetCorners && validCorners(presetCorners, sourceCanvas)
+        ? JSON.parse(JSON.stringify(presetCorners)) // copie (les poignées modifient)
+        : detectCorners(sourceCanvas);
     buildOverlay();
     updatePositions();
   } catch (e) {
@@ -446,8 +454,9 @@ function dewarpSize(c, imgW, imgH) {
     if (w / h > ratio) h = w / ratio;
     else w = h * ratio;
   }
-  // Plafond mémoire : ~4000 px suffit largement (A4 ≈ 340 dpi).
-  const MAX = 4000;
+  // Plafond mémoire : ~3200 px suffit largement (A4 ≈ 270 dpi) et reste
+  // léger pour les téléphones.
+  const MAX = 3200;
   if (Math.max(w, h) > MAX) {
     const s = MAX / Math.max(w, h);
     w *= s;
@@ -490,10 +499,17 @@ export function cropToCanvas() {
   return warpToCanvas(sourceCanvas, corners, w, h);
 }
 
-// Détourage AUTOMATIQUE d'une photo (mode cachet : pas d'écran de
-// recadrage). Si un document est détecté de façon fiable → on le
-// redresse ; sinon on rend la photo telle quelle.
-export async function autoDewarp(dataUrl) {
+// Les coins actuellement choisis sur l'écran de rognage (copie).
+export function getCropCorners() {
+  return corners ? JSON.parse(JSON.stringify(corners)) : null;
+}
+
+// Détourage AUTOMATIQUE d'une photo. `hintQuad` (optionnel) : le cadre
+// déjà détecté par la visée en direct au moment du déclic — c'est lui
+// qu'on applique en priorité ("ce que tu vois est ce que tu obtiens"),
+// même si le document est loin dans le cadre. Sinon on re-détecte sur
+// la photo. Si rien de fiable → photo telle quelle.
+export async function autoDewarp(dataUrl, hintQuad) {
   await ensureEngineLoaded();
   const img = new Image();
   await new Promise((resolve, reject) => {
@@ -506,28 +522,54 @@ export async function autoDewarp(dataUrl) {
   canvas.height = img.naturalHeight;
   canvas.getContext("2d").drawImage(img, 0, 0);
 
-  // La détection se fait sur une version RÉDUITE (≤900 px) : bien plus
-  // rapide et léger en mémoire qu'analyser la photo 4K, pour le même
-  // résultat (les coins sont remis à l'échelle ensuite).
-  const k = Math.min(1, 900 / Math.max(canvas.width, canvas.height));
-  let quad;
-  if (k < 1) {
-    const small = document.createElement("canvas");
-    small.width = Math.round(canvas.width * k);
-    small.height = Math.round(canvas.height * k);
-    small.getContext("2d").drawImage(canvas, 0, 0, small.width, small.height);
-    quad = detectDocument(small);
-    if (quad) {
-      for (const key of CORNER_KEYS) {
-        quad[key] = { x: quad[key].x / k, y: quad[key].y / k };
-      }
-    }
-  } else {
-    quad = detectDocument(canvas);
+  // 1. Le cadre de la visée, s'il est plausible, gagne.
+  let quad = null;
+  if (hintQuad && validCorners(hintQuad, canvas)) {
+    quad = JSON.parse(JSON.stringify(hintQuad));
   }
 
-  if (!quad) return { dataUrl, cropped: false };
-  const { w, h } = dewarpSize(quad, canvas.width, canvas.height);
-  const warped = warpToCanvas(canvas, quad, w, h);
-  return { dataUrl: warped.toDataURL("image/jpeg", 0.95), cropped: true };
+  // 2. Sinon : détection sur une version RÉDUITE (≤900 px) — bien plus
+  // rapide et léger en mémoire qu'analyser la photo 4K, pour le même
+  // résultat (les coins sont remis à l'échelle ensuite).
+  if (!quad) {
+    const k = Math.min(1, 900 / Math.max(canvas.width, canvas.height));
+    if (k < 1) {
+      const small = document.createElement("canvas");
+      small.width = Math.round(canvas.width * k);
+      small.height = Math.round(canvas.height * k);
+      small.getContext("2d").drawImage(canvas, 0, 0, small.width, small.height);
+      quad = detectDocument(small);
+      if (quad) {
+        for (const key of CORNER_KEYS) {
+          quad[key] = { x: quad[key].x / k, y: quad[key].y / k };
+        }
+      }
+    } else {
+      quad = detectDocument(canvas);
+    }
+  }
+
+  if (!quad) return { dataUrl, corners: null, cropped: false };
+
+  // 3. Redressement. Si la mémoire du téléphone ne suit pas sur la photo
+  // pleine résolution, on retente sur une version réduite de moitié
+  // (toujours largement suffisant pour le PDF et l'OCR).
+  try {
+    const { w, h } = dewarpSize(quad, canvas.width, canvas.height);
+    const warped = warpToCanvas(canvas, quad, w, h);
+    return { dataUrl: warped.toDataURL("image/jpeg", 0.95), corners: quad, cropped: true };
+  } catch (e) {
+    console.warn("Détourage pleine résolution impossible, repli en demi-taille.", e);
+    const half = document.createElement("canvas");
+    half.width = Math.max(1, Math.round(canvas.width / 2));
+    half.height = Math.max(1, Math.round(canvas.height / 2));
+    half.getContext("2d").drawImage(canvas, 0, 0, half.width, half.height);
+    const hq = {};
+    for (const key of CORNER_KEYS) {
+      hq[key] = { x: quad[key].x / 2, y: quad[key].y / 2 };
+    }
+    const { w, h } = dewarpSize(hq, half.width, half.height);
+    const warped = warpToCanvas(half, hq, w, h);
+    return { dataUrl: warped.toDataURL("image/jpeg", 0.95), corners: quad, cropped: true };
+  }
 }
