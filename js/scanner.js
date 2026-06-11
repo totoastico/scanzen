@@ -171,6 +171,9 @@ function detectQuad(src, pass) {
 
     const imgArea = small.rows * small.cols;
     const minArea = pass.minAreaPct * imgArea; // taille minimale de la feuille
+    // Un quad qui couvre TOUTE l'image n'est pas un document : c'est le
+    // bord du cadre lui-même (ex. fond uni → seuillage plein écran).
+    const maxArea = 0.96 * imgArea;
     let bestPts = null;
     let bestScore = 0;
     for (let i = 0; i < contours.size(); i++) {
@@ -186,7 +189,7 @@ function detectQuad(src, pass) {
       }
       if (approx.rows === 4 && cv.isContourConvex(approx)) {
         const area = cv.contourArea(approx);
-        if (area > minArea) {
+        if (area > minArea && area < maxArea) {
           const pts = [];
           for (let j = 0; j < 4; j++) {
             pts.push({
@@ -226,12 +229,20 @@ const DETECT_PASSES = [
   { otsu: true, minAreaPct: 0.15 },                 // feuille claire sur fond uni
 ];
 
-function detectCorners(src) {
-  for (const pass of DETECT_PASSES) {
+// Détection "stricte" : renvoie le quadrilatère du document, ou null si
+// rien de fiable n'est trouvé. (Utilisée aussi par la visée en direct.)
+// maxPasses : la visée en direct se limite aux passes rapides (Canny),
+// sinon chaque image "ratée" coûterait les 3 passes toutes les 180 ms.
+export function detectDocument(src, maxPasses = DETECT_PASSES.length) {
+  for (const pass of DETECT_PASSES.slice(0, maxPasses)) {
     const quad = detectQuad(src, pass);
     if (quad && validCorners(quad, src)) return quad;
   }
-  return defaultCorners(src);
+  return null;
+}
+
+function detectCorners(src) {
+  return detectDocument(src) || defaultCorners(src);
 }
 
 // ===================================================================
@@ -413,8 +424,9 @@ export async function initCrop(imageDataUrl) {
 // Taille de sortie : on garde le plus grand côté MESURÉ (= netteté max),
 // et l'autre côté est calculé d'après le VRAI format de la feuille
 // (estimateAspectRatio) → fini les documents étirés ou écrasés.
-export function cropToCanvas() {
-  const c = corners;
+// Calcule la taille de sortie du document redressé : on garde le plus
+// grand côté MESURÉ (netteté max) et l'autre suit le VRAI format estimé.
+function dewarpSize(c, imgW, imgH) {
   let w = Math.max(
     distance(c.topLeftCorner, c.topRightCorner),
     distance(c.bottomLeftCorner, c.bottomRightCorner)
@@ -427,7 +439,7 @@ export function cropToCanvas() {
 
   // Garde-fou : si l'estimation s'écarte de plus de ×2 du rapport mesuré
   // sur les bords, c'est du bruit → on ignore.
-  let ratio = estimateAspectRatio(c, sourceCanvas.width, sourceCanvas.height);
+  let ratio = estimateAspectRatio(c, imgW, imgH);
   if (!ratio || ratio < edgeRatio / 2 || ratio > edgeRatio * 2) ratio = null;
   if (ratio) {
     // On agrandit le côté sous-estimé (jamais de perte de résolution).
@@ -441,14 +453,15 @@ export function cropToCanvas() {
     w *= s;
     h *= s;
   }
-  w = Math.max(1, Math.round(w));
-  h = Math.max(1, Math.round(h));
+  return { w: Math.max(1, Math.round(w)), h: Math.max(1, Math.round(h)) };
+}
 
-  // Transformation de perspective : les 4 coins → un rectangle w × h.
+// Transformation de perspective : les 4 coins → un rectangle w × h.
+function warpToCanvas(srcCanvas, c, w, h) {
   const cv = window.cv;
   let src, srcPts, dstPts, M, out;
   try {
-    src = cv.imread(sourceCanvas);
+    src = cv.imread(srcCanvas);
     srcPts = cv.matFromArray(4, 1, cv.CV_32FC2, [
       c.topLeftCorner.x, c.topLeftCorner.y,
       c.topRightCorner.x, c.topRightCorner.y,
@@ -470,4 +483,51 @@ export function cropToCanvas() {
       } catch (_) {}
     });
   }
+}
+
+export function cropToCanvas() {
+  const { w, h } = dewarpSize(corners, sourceCanvas.width, sourceCanvas.height);
+  return warpToCanvas(sourceCanvas, corners, w, h);
+}
+
+// Détourage AUTOMATIQUE d'une photo (mode cachet : pas d'écran de
+// recadrage). Si un document est détecté de façon fiable → on le
+// redresse ; sinon on rend la photo telle quelle.
+export async function autoDewarp(dataUrl) {
+  await ensureEngineLoaded();
+  const img = new Image();
+  await new Promise((resolve, reject) => {
+    img.onload = resolve;
+    img.onerror = () => reject(new Error("Image illisible"));
+    img.src = dataUrl;
+  });
+  const canvas = document.createElement("canvas");
+  canvas.width = img.naturalWidth;
+  canvas.height = img.naturalHeight;
+  canvas.getContext("2d").drawImage(img, 0, 0);
+
+  // La détection se fait sur une version RÉDUITE (≤900 px) : bien plus
+  // rapide et léger en mémoire qu'analyser la photo 4K, pour le même
+  // résultat (les coins sont remis à l'échelle ensuite).
+  const k = Math.min(1, 900 / Math.max(canvas.width, canvas.height));
+  let quad;
+  if (k < 1) {
+    const small = document.createElement("canvas");
+    small.width = Math.round(canvas.width * k);
+    small.height = Math.round(canvas.height * k);
+    small.getContext("2d").drawImage(canvas, 0, 0, small.width, small.height);
+    quad = detectDocument(small);
+    if (quad) {
+      for (const key of CORNER_KEYS) {
+        quad[key] = { x: quad[key].x / k, y: quad[key].y / k };
+      }
+    }
+  } else {
+    quad = detectDocument(canvas);
+  }
+
+  if (!quad) return { dataUrl, cropped: false };
+  const { w, h } = dewarpSize(quad, canvas.width, canvas.height);
+  const warped = warpToCanvas(canvas, quad, w, h);
+  return { dataUrl: warped.toDataURL("image/jpeg", 0.95), cropped: true };
 }

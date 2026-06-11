@@ -6,7 +6,8 @@
 // ===================================================================
 
 import { startCamera, stopCamera, capturePhoto } from "./camera.js";
-import { initCrop, cropToCanvas } from "./scanner.js";
+import { initCrop, cropToCanvas, autoDewarp } from "./scanner.js";
+import { startLiveScan, stopLiveScan } from "./livescan.js";
 import { applyFilter } from "./filters.js";
 import { addPage, pageCount, getPages, clearPages } from "./pages.js";
 import { buildPdf, sharePdf } from "./pdf.js";
@@ -31,6 +32,7 @@ const EXPORT_LABEL = "Exporter en PDF";
 // --- Mode de la caméra / parcours cachet ---
 let cameraMode = "scan";                  // "scan" (Scanner) ou "cachet" (Contrat)
 let cachetPages = [];                     // images du lot cachet en cours (≠ pages scan)
+let cachetDewarps = [];                   // détourages auto en cours (promesses)
 let cachetReturnScreen = "screen-home";   // où revenir depuis le découpage
 let sentFirstPages = new Set();           // contrats déjà envoyés (clé = 1re page) → anti-doublon
 let skippedFirstPages = new Set();        // contrats ignorés volontairement
@@ -154,13 +156,26 @@ function updateCachetStrip() {
 }
 
 // --- Ouvrir la caméra (Scanner, Cachet, "Reprendre" ou "Ajouter une page") ---
+const cameraOverlay = document.getElementById("camera-overlay");
+let cameraSession = 0; // change à chaque ouverture/fermeture : une ouverture
+                       // devenue obsolète (fermée pendant le démarrage) s'abandonne
 async function openCamera() {
+  const session = ++cameraSession;
   showScreen("screen-camera");
   cameraError.hidden = true;
   updateCameraDone();
   try {
     await startCamera(video);
+    if (session !== cameraSession) {
+      // L'utilisateur a fermé PENDANT le démarrage (ex. fenêtre
+      // d'autorisation) : on coupe le flux qui vient d'arriver.
+      stopCamera(video);
+      return;
+    }
+    // Visée en direct : le cadre du document suit le flux vidéo.
+    startLiveScan(video, cameraOverlay);
   } catch (err) {
+    if (session !== cameraSession) return;
     cameraErrorText.textContent = describeCameraError(err);
     cameraError.hidden = false;
   }
@@ -176,9 +191,12 @@ function closeCamera() {
       return; // l'utilisateur annule → on reste sur la caméra
     }
   }
+  cameraSession++; // invalide une ouverture encore en cours de démarrage
+  stopLiveScan(cameraOverlay);
   stopCamera(video);
   if (cameraMode === "cachet") {
     cachetPages = [];
+    cachetDewarps = [];
     cameraMode = "scan";
     showScreen("screen-home");
     return;
@@ -236,6 +254,7 @@ document.getElementById("btn-scan").addEventListener("click", () => {
 document.getElementById("btn-cachet-home").addEventListener("click", () => {
   cameraMode = "cachet";
   cachetPages = [];
+  cachetDewarps = [];
   cachetReturnScreen = "screen-home";
   openCamera();
 });
@@ -362,7 +381,22 @@ document.getElementById("btn-crop-loading-back").addEventListener("click", openC
 document.getElementById("btn-capture").addEventListener("click", () => {
   const img = capturePhoto(video);
   if (cameraMode === "cachet") {
+    const idx = cachetPages.length;
     cachetPages.push(img);
+    // Détourage automatique en arrière-plan : le cadre détecté à la
+    // prise devient le rognage de la page (le déclencheur reste instantané).
+    const job = autoDewarp(img)
+      .then((r) => {
+        if (cachetPages[idx] === img) {
+          cachetPages[idx] = r.dataUrl;
+          // met à jour SA vignette, sans reconstruire la bande (qui
+          // sauterait sous le doigt de l'utilisateur)
+          const cell = cameraStrip.children[idx];
+          if (cell) cell.src = r.dataUrl;
+        }
+      })
+      .catch(() => {}); // détourage raté → on garde la photo entière
+    cachetDewarps.push(job);
     // petit éclair blanc : confirme visuellement la prise
     const flash = document.getElementById("camera-flash");
     flash.classList.remove("is-on");
@@ -375,16 +409,35 @@ document.getElementById("btn-capture").addEventListener("click", () => {
   state.activeFilter = "auto"; // photo → filtre "Auto" par défaut (≠ téléversement)
   state.fromImport = false;
   previewImage.src = img;
+  stopLiveScan(cameraOverlay);
   stopCamera(video);
   showScreen("screen-preview");
 });
 
-// Caméra (mode cachet) → "Terminer" : lance le découpage des pages prises.
+// Caméra (mode cachet) → "Terminer" : attend la fin des détourages
+// automatiques, puis lance le découpage des pages prises.
+let cachetDoneRunning = false; // anti double-déclenchement (Entrée clavier…)
 document.getElementById("btn-camera-done").addEventListener("click", async () => {
-  if (cachetPages.length === 0) return;
-  stopCamera(video);
-  cachetReturnScreen = "screen-home";
-  await startCachetFlow(cachetPages.slice());
+  if (cachetDoneRunning || cachetPages.length === 0) return;
+  cachetDoneRunning = true;
+  try {
+    cameraSession++;
+    stopLiveScan(cameraOverlay);
+    stopCamera(video);
+    if (cachetDewarps.length) {
+      showBusy("Détourage des pages…");
+      try {
+        await Promise.all(cachetDewarps);
+      } finally {
+        hideBusy();
+      }
+      cachetDewarps = [];
+    }
+    cachetReturnScreen = "screen-home";
+    await startCachetFlow(cachetPages.slice());
+  } finally {
+    cachetDoneRunning = false;
+  }
 });
 
 // Aperçu → "Reprendre"

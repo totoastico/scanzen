@@ -67,6 +67,9 @@
     <!-- Le flux vidéo de la caméra (rempli au démarrage par camera.js) -->
     <video class="camera__video" id="camera-video" autoplay playsinline muted></video>
 
+    <!-- Visée en direct : le cadre du document détecté, dessiné par livescan.js -->
+    <canvas class="camera__overlay" id="camera-overlay"></canvas>
+
     <!-- Barre du haut : fermer + (mode cachet) terminer la prise de pages -->
     <div class="camera__top">
       <button class="icon-button" id="btn-close-camera" type="button" aria-label="Fermer">✕</button>
