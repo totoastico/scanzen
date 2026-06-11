@@ -16,8 +16,10 @@ const KEYS = ["topLeftCorner", "topRightCorner", "bottomRightCorner", "bottomLef
 
 let running = false;
 let generation = 0;  // une seule boucle active à la fois (anti-doublon)
-let timer = null;
-let smooth = null;   // coins lissés (en pixels VIDÉO)
+let timer = null;    // boucle de DÉTECTION (~5×/s)
+let rafId = null;    // boucle de DESSIN (60 images/s, fluide)
+let target = null;   // dernier cadre détecté (en pixels VIDÉO)
+let smooth = null;   // cadre affiché, qui GLISSE vers target à chaque image
 let missCount = 0;   // détections ratées d'affilée → on efface le cadre
 
 // Petit canvas de travail réutilisé (≈360 px de large : assez pour
@@ -51,7 +53,10 @@ export function startLiveScan(videoEl, overlayEl) {
   // OpenCV se charge en arrière-plan ; la visée démarre dès qu'il est prêt.
   ensureEngineLoaded()
     .then(() => {
-      if (running && gen === generation) tick(videoEl, overlayEl, gen);
+      if (running && gen === generation) {
+        detectTick(videoEl, gen); // détection ~5×/s (coûteuse)
+        drawTick(videoEl, overlayEl, gen); // dessin 60 img/s (léger)
+      }
     })
     .catch(() => {}); // hors-ligne : pas de visée, la caméra marche quand même
 }
@@ -59,6 +64,8 @@ export function startLiveScan(videoEl, overlayEl) {
 export function stopLiveScan(overlayEl) {
   running = false;
   clearTimeout(timer);
+  cancelAnimationFrame(rafId);
+  target = null;
   smooth = null;
   missCount = 0;
   if (overlayEl && overlayEl.width) {
@@ -66,29 +73,29 @@ export function stopLiveScan(overlayEl) {
   }
 }
 
-function tick(videoEl, overlayEl, gen) {
+// --- Boucle de détection : cherche le document dans le flux (~5×/s) ---
+function detectTick(videoEl, gen) {
   if (!running || gen !== generation) return;
   try {
-    step(videoEl, overlayEl);
+    detectStep(videoEl);
   } catch (e) {
     // une analyse ratée ne doit jamais casser la caméra
   }
-  timer = setTimeout(() => tick(videoEl, overlayEl, gen), 180);
+  timer = setTimeout(() => detectTick(videoEl, gen), 180);
 }
 
-function step(videoEl, overlayEl) {
+function detectStep(videoEl) {
   const vw = videoEl.videoWidth;
   const vh = videoEl.videoHeight;
   if (!vw || !vh) return; // flux pas encore prêt
 
-  // 1. Photo réduite du flux
-  const w = 360;
+  // Photo réduite du flux (480 px : bon équilibre précision / vitesse).
+  const w = 480;
   const h = Math.max(1, Math.round((vh * w) / vw));
   sample.width = w;
   sample.height = h;
   sampleCtx.drawImage(videoEl, 0, 0, w, h);
 
-  // 2. Détection + lissage (coordonnées remises à l'échelle vidéo).
   // 2 passes max : assez pour suivre, sans saturer le téléphone.
   const quad = detectDocument(sample, 2);
   if (quad) {
@@ -96,14 +103,24 @@ function step(videoEl, overlayEl) {
     for (const k of KEYS) {
       scaled[k] = { x: (quad[k].x * vw) / w, y: (quad[k].y * vh) / h };
     }
-    smooth = smooth ? lerpCorners(smooth, scaled, 0.4) : scaled;
+    target = scaled;
     missCount = 0;
   } else if (++missCount > 4) {
-    smooth = null; // plus de document depuis ~1 s → on efface
+    target = null; // plus de document depuis ~1 s → on efface
   }
+}
 
-  // 3. Dessin
+// --- Boucle de dessin : le cadre GLISSE vers la dernière détection,
+//     à chaque image écran → mouvement fluide, plus de saccades. ---
+function drawTick(videoEl, overlayEl, gen) {
+  if (!running || gen !== generation) return;
+  if (target) {
+    smooth = smooth ? lerpCorners(smooth, target, 0.18) : target;
+  } else {
+    smooth = null;
+  }
   draw(videoEl, overlayEl);
+  rafId = requestAnimationFrame(() => drawTick(videoEl, overlayEl, gen));
 }
 
 function draw(videoEl, overlayEl) {

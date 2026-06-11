@@ -70,8 +70,18 @@ export function extractFields(text) {
     (T.match(/directeu?r?ic?e?\s+artistique\s*:?\s*([A-ZÉÀ][\wÀ-ÿ'\-]+(?:\s+[A-ZÉÀ][\wÀ-ÿ'\-]+)?)/i) || [])[1] ||
     "";
 
-  // Rôle : "rôle(s) de X pour"
-  let role = (T.match(/r[ôo]le\(?s?\)?\s*(?:de|:)\s*(.+?)\s+pour\b/i) || [])[1] || "";
+  // Rôle : "rôle(s) de (ou créer la voix) de X dans l'œuvre…" (Deluxe,
+  // Titra, Transperfect) ou "rôle(s) de X pour…" (Video Adapt).
+  // On saute le "(ou créer la voix) de" et on s'arrête au PREMIER
+  // "dans"/"pour" pour ne pas avaler les cases à cocher qui suivent.
+  let role =
+    (T.match(
+      /r[ôo]le\(?s?\)?\s*(?:de|:)\s*(?:\(?ou cr[ée]+r la voix\)?\s*(?:de)?\s*:?\s*)?(.+?)\s+(?:dans|pour)\b/i
+    ) || [])[1] || "";
+  // Trop long = du bruit d'OCR (formulaire, cases à cocher…), pas un rôle.
+  if (role.length > 60) role = "";
+  // Convention perso : "AMB" / "amb." / "ambiance(s)" → "Ambiances".
+  role = role.replace(/\bamb\w*\.?/gi, "Ambiances");
 
   // Date de réalisation : "dates suivantes : X", sinon "Date X", sinon 1re date
   const dateRaw =
