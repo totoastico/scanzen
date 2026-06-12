@@ -982,8 +982,20 @@ function makeSplitThumb(item, locked) {
     del.addEventListener("click", () => removeSplitItem(item));
     cell.appendChild(del);
     cell.addEventListener("pointerdown", (e) => startThumbDrag(e, item, cell));
+    // (le simple appui sans glissé ouvre l'aperçu — voir thumbDragEnd)
+  } else {
+    // Contrat figé (déjà envoyé) : pas de glissé, mais on garde l'aperçu.
+    cell.addEventListener("click", () => openSplitPreview(item));
   }
   return cell;
+}
+
+// Aperçu d'un contrat : montre les pages du groupe contenant cette page,
+// dans la visionneuse zoomable → on identifie vite quel contrat est quel.
+function openSplitPreview(item) {
+  const group = cachetGroups.find((g) => g.includes(item)) || [item];
+  const start = Math.max(0, group.indexOf(item));
+  openViewer(group.map((it) => it.url), start);
 }
 
 // Retire une page du lot (elle ne sera ni envoyée, ni dans le PDF).
@@ -1052,13 +1064,19 @@ function thumbDragMove(e) {
   if (target) target.classList.add("ct-card--target");
 }
 
-function thumbDragEnd() {
+function thumbDragEnd(e) {
   if (!thumbDrag) return;
   const { item, cell, ghost, target } = thumbDrag;
   thumbDrag = null;
   if (ghost) ghost.remove();
   cell.classList.remove("ct-thumb--dragging");
-  if (!ghost || !target) return; // simple appui ou lâché dans le vide
+  if (!ghost) {
+    // Pas de glissé = simple appui → APERÇU du contrat (pour voir vite
+    // quel contrat est quel). Une annulation système, elle, n'ouvre rien.
+    if (!e || e.type === "pointerup") openSplitPreview(item);
+    return;
+  }
+  if (!target) return; // glissé lâché dans le vide
   target.classList.remove("ct-card--target");
 
   // Retire la page de son groupe d'origine…

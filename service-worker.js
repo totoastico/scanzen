@@ -6,7 +6,7 @@
 // bascule sur le cache que si tu es hors-ligne.
 // ===================================================================
 
-const CACHE = "scanzen-v18";
+const CACHE = "scanzen-v19";
 
 const SHELL = [
   "./",
