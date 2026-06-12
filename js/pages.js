@@ -139,14 +139,17 @@ export function render() {
     thumb.className = "page-card__thumb";
     thumb.src = page.display;
     thumb.alt = "Page " + (i + 1);
-    // Taper la vignette ouvre l'éditeur de cette page.
+    // Taper la vignette = APERÇU agrandi (zoom), juste pour vérifier le
+    // scan. L'édition se fait via le bouton ✎ (ci-dessous).
     thumb.addEventListener("click", () => {
-      document.dispatchEvent(new CustomEvent("page-open", { detail: { index: i } }));
+      document.dispatchEvent(new CustomEvent("page-preview", { detail: { index: i } }));
     });
 
     const controls = document.createElement("div");
     controls.className = "page-card__controls";
     controls.append(
+      makeButton("✎", "page-ctrl", () =>
+        document.dispatchEvent(new CustomEvent("page-open", { detail: { index: i } })), false),
       makeButton("↑", "page-ctrl", () => movePage(i, -1), i === 0),
       makeButton("↓", "page-ctrl", () => movePage(i, +1), i === n - 1),
       makeButton("✕", "page-ctrl page-card__del", () => removePage(i), false)

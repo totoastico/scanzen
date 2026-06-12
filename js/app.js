@@ -340,6 +340,13 @@ document.getElementById("file-input").addEventListener("change", async (e) => {
   }
 });
 
+// Liste → "Téléverser une page" : on réutilise le même sélecteur de
+// fichiers que l'accueil (le gestionnaire ci-dessus ajoute les pages et
+// reste sur la liste).
+document.getElementById("btn-add-upload").addEventListener("click", () => {
+  document.getElementById("file-input").click();
+});
+
 document.getElementById("btn-close-camera").addEventListener("click", closeCamera);
 document.getElementById("btn-camera-back").addEventListener("click", closeCamera);
 // Échec de chargement du moteur de détection → retour à l'éditeur (pas de cul-de-sac)
@@ -450,7 +457,9 @@ function leaveEditor() {
   else showScreen(pageCount() > 0 ? "screen-pages" : "screen-home");
 }
 
-// Liste → taper une vignette
+// Liste → taper une vignette = APERÇU simple (visionneuse zoomable),
+// sans édition. Le bouton ✎ de la carte ouvre l'éditeur.
+document.addEventListener("page-preview", (e) => openViewer(getPages(), e.detail.index));
 document.addEventListener("page-open", (e) => openEditor(getPage(e.detail.index), "screen-pages"));
 
 // Filtres + rotation
