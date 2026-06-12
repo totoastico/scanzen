@@ -20,6 +20,14 @@
   <meta name="mobile-web-app-capable" content="yes" />
 
   <title>Scanzen — Scanner de documents</title>
+
+  <!-- On prépare à l'avance la connexion aux CDN des grosses libs
+       (OpenCV, Tesseract, jsPDF, pdf.js) : la poignée de main réseau est
+       déjà faite quand on en a besoin → 1er chargement un peu plus rapide. -->
+  <link rel="preconnect" href="https://docs.opencv.org" crossorigin />
+  <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
+  <link rel="preconnect" href="https://tessdata.projectnaptha.com" crossorigin />
+
   <link rel="stylesheet" href="css/style.css" />
 </head>
 <body>

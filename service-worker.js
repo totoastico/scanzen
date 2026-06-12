@@ -6,7 +6,7 @@
 // bascule sur le cache que si tu es hors-ligne.
 // ===================================================================
 
-const CACHE = "scanzen-v15";
+const CACHE = "scanzen-v16";
 
 const SHELL = [
   "./",
@@ -48,12 +48,30 @@ self.addEventListener("fetch", (event) => {
   if (req.method !== "GET") return;
 
   const sameOrigin = new URL(req.url).origin === self.location.origin;
-  const fetcher = sameOrigin
-    ? fetch(new Request(req.url, { cache: "no-store" }))
-    : fetch(req);
 
+  // --- Bibliothèques tierces (OpenCV, Tesseract, jsPDF, pdf.js + leurs
+  //     fichiers wasm/données) : leur URL contient une VERSION FIGÉE, donc
+  //     leur contenu ne change jamais. On les sert d'abord depuis le CACHE
+  //     (instantané, marche hors-ligne) et on ne télécharge que si absent.
+  //     C'est le gros gain de vitesse aux ouvertures suivantes. ---
+  if (!sameOrigin) {
+    event.respondWith(
+      caches.match(req).then((hit) => {
+        if (hit) return hit;
+        return fetch(req).then((response) => {
+          const copy = response.clone();
+          caches.open(CACHE).then((cache) => cache.put(req, copy)).catch(() => {});
+          return response;
+        });
+      })
+    );
+    return;
+  }
+
+  // --- Notre propre code (même origine) : réseau D'ABORD, sans cache HTTP,
+  //     pour toujours avoir la version fraîche ; cache en secours hors-ligne. ---
   event.respondWith(
-    fetcher
+    fetch(new Request(req.url, { cache: "no-store" }))
       .then((response) => {
         const copy = response.clone();
         caches.open(CACHE).then((cache) => cache.put(req, copy)).catch(() => {});

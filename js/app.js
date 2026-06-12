@@ -189,8 +189,9 @@ async function processPage(page) {
   try {
     // 1) détourage/redressement (cadre de la visée si dispo, sinon détection)
     const r = await autoDewarp(page.original, page.hint);
-    // 2) effet "Auto" (éclairage aplani) → image lisible pour l'OCR + le PDF
-    const flatCanvas = await imageToCanvas(r.dataUrl);
+    // 2) effet "Auto" (éclairage aplani) → image lisible pour l'OCR + le PDF.
+    //    autoDewarp nous rend le canvas déjà décodé → pas de ré-décodage.
+    const flatCanvas = r.canvas || (await imageToCanvas(r.dataUrl));
     const display = applyFilter(flatCanvas, page.filter || "auto");
     updatePage(page, { flat: r.dataUrl, display, corners: r.corners, processed: true });
   } catch (e) {

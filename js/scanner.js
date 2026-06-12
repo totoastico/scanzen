@@ -551,7 +551,9 @@ export async function autoDewarp(dataUrl, hintQuad) {
     }
   }
 
-  if (!quad) return { dataUrl, corners: null, cropped: false };
+  // Rien de fiable détecté : on renvoie la photo telle quelle ET son canvas
+  // déjà décodé (évite à l'appelant de re-décoder pour le filtre).
+  if (!quad) return { dataUrl, canvas, corners: null, cropped: false };
 
   // 3. Redressement. Si la mémoire du téléphone ne suit pas sur la photo
   // pleine résolution, on retente sur une version réduite de moitié
@@ -559,7 +561,9 @@ export async function autoDewarp(dataUrl, hintQuad) {
   try {
     const { w, h } = dewarpSize(quad, canvas.width, canvas.height);
     const warped = warpToCanvas(canvas, quad, w, h);
-    return { dataUrl: warped.toDataURL("image/jpeg", 0.95), corners: quad, cropped: true };
+    // On renvoie aussi le canvas redressé : l'appelant (processPage) lui
+    // applique directement le filtre, sans ré-encoder/ré-décoder l'image.
+    return { dataUrl: warped.toDataURL("image/jpeg", 0.95), canvas: warped, corners: quad, cropped: true };
   } catch (e) {
     console.warn("Détourage pleine résolution impossible, repli en demi-taille.", e);
     const half = document.createElement("canvas");
@@ -572,6 +576,6 @@ export async function autoDewarp(dataUrl, hintQuad) {
     }
     const { w, h } = dewarpSize(hq, half.width, half.height);
     const warped = warpToCanvas(half, hq, w, h);
-    return { dataUrl: warped.toDataURL("image/jpeg", 0.95), corners: quad, cropped: true };
+    return { dataUrl: warped.toDataURL("image/jpeg", 0.95), canvas: warped, corners: quad, cropped: true };
   }
 }
