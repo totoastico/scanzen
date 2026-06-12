@@ -454,9 +454,10 @@ function dewarpSize(c, imgW, imgH) {
     if (w / h > ratio) h = w / ratio;
     else w = h * ratio;
   }
-  // Plafond mémoire : ~2200 px largement assez pour l'OCR et le PDF
-  // (A4 ≈ 185 dpi), et le redressement reste rapide sur un téléphone.
-  const MAX = 2200;
+  // Plafond mémoire : ~3200 px (A4 ≈ 270 dpi) → texte NET pour l'OCR.
+  // Le redressement est désormais différé (caméra coupée, par lot), donc
+  // cette résolution ne coûte plus aucune fluidité à la prise de vue.
+  const MAX = 3200;
   if (Math.max(w, h) > MAX) {
     const s = MAX / Math.max(w, h);
     w *= s;
@@ -480,9 +481,9 @@ function warpToCanvas(srcCanvas, c, w, h) {
     dstPts = cv.matFromArray(4, 1, cv.CV_32FC2, [0, 0, w, 0, w, h, 0, h]);
     M = cv.getPerspectiveTransform(srcPts, dstPts);
     out = new cv.Mat();
-    // INTER_LINEAR : nettement plus rapide que CUBIC sur mobile, qualité
-    // amplement suffisante pour un document.
-    cv.warpPerspective(src, out, M, new cv.Size(w, h), cv.INTER_LINEAR, cv.BORDER_REPLICATE);
+    // INTER_CUBIC : interpolation de meilleure qualité → texte plus net
+    // pour l'OCR. Le coût est négligeable (détourage différé, hors caméra).
+    cv.warpPerspective(src, out, M, new cv.Size(w, h), cv.INTER_CUBIC, cv.BORDER_REPLICATE);
     const canvas = document.createElement("canvas");
     cv.imshow(canvas, out);
     return canvas;

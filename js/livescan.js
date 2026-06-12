@@ -89,17 +89,18 @@ function detectStep(videoEl) {
   const vh = videoEl.videoHeight;
   if (!vw || !vh) return; // flux pas encore prêt
 
-  // Photo réduite du flux (480 px). La visée n'est qu'un GUIDE visuel :
-  // 1 seule passe suffit et reste légère sur le téléphone. Le vrai
-  // détourage (au "Terminer", caméra coupée) refait une détection complète.
+  // Photo réduite du flux (480 px). Ce cadre sert AUSSI de rognage au
+  // déclic ("ce que tu vois est ce que tu obtiens"), donc on veut qu'il
+  // soit assez précis pour ne pas couper de texte.
   const w = 480;
   const h = Math.max(1, Math.round((vh * w) / vw));
   sample.width = w;
   sample.height = h;
   sampleCtx.drawImage(videoEl, 0, 0, w, h);
 
-  // 1 passe : assez pour le cadre-guide, sans saturer le fil principal.
-  const quad = detectDocument(sample, 1);
+  // 2 passes Canny : cadre plus fiable. Le détourage lourd n'étant plus
+  // lancé pendant la prise de vue, le fil principal peut se le permettre.
+  const quad = detectDocument(sample, 2);
   if (quad) {
     const scaled = {};
     for (const k of KEYS) {
