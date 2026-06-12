@@ -39,6 +39,9 @@ export function addPage(p) {
     filter: b.filter || (isUpload ? "original" : "auto"),
     // un fichier importé est déjà propre → rien à détourer ; une photo, si.
     processed: isUpload ? true : !!b.processed,
+    // identifiant du FICHIER source (téléversement) → 1 fichier = 1 contrat
+    // dans l'analyse cachet. null pour une photo caméra (découpage par OCR).
+    group: b.group || null,
   };
   pages.push(page);
   render();
@@ -48,6 +51,13 @@ export function addPage(p) {
 // Renvoie les images affichables (pour le PDF, l'analyse cachet…).
 export function getPages() {
   return pages.map((p) => p.display);
+}
+
+// Renvoie, dans le même ordre, l'identifiant du fichier source de chaque
+// page (ou null pour une photo caméra). Sert au découpage cachet :
+// 1 fichier = 1 contrat.
+export function getPageGroups() {
+  return pages.map((p) => p.group || null);
 }
 
 // Renvoie l'objet page complet (pour l'éditeur).

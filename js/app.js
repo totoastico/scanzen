@@ -9,7 +9,7 @@ import { startCamera, stopCamera, capturePhoto } from "./camera.js";
 import { initCrop, cropToCanvas, getCropCorners, autoDewarp } from "./scanner.js";
 import { startLiveScan, stopLiveScan, getCurrentQuad } from "./livescan.js";
 import { applyFilter } from "./filters.js";
-import { addPage, pageCount, getPages, getPage, pageIndex, updatePage, clearPages } from "./pages.js";
+import { addPage, pageCount, getPages, getPageGroups, getPage, pageIndex, updatePage, clearPages } from "./pages.js";
 import { buildPdf, sharePdf } from "./pdf.js";
 import { ocrPage, terminateOcr } from "./ocr.js";
 import { extractFields, buildFilename, isContractStart } from "./contract.js";
@@ -300,37 +300,46 @@ function imageToCanvas(dataUrl) {
   });
 }
 
-// Transforme les fichiers choisis (images et/ou PDF) en une liste d'images.
+// Téléverse des fichiers (images et/ou PDF) en pages, EN GARDANT la
+// frontière des fichiers : chaque fichier reçoit un identifiant `group`
+// commun à ses pages → 1 fichier = 1 contrat dans l'analyse cachet (le
+// découpage auto par OCR ne s'applique qu'aux photos prises à la caméra).
 // Un PDF est rendu page par page. Word/.docx non géré.
-async function filesToImages(files) {
-  const images = [];
+let uploadSeq = 0;
+async function addUploadedFiles(files) {
+  let added = 0;
   for (const file of files) {
+    let imgs = [];
     if (isPdf(file)) {
       showBusy("Lecture du PDF…");
-      const pages = await pdfToImages(file, (i, total) =>
+      imgs = await pdfToImages(file, (i, total) =>
         showBusy(`Lecture du PDF… page ${i}/${total}`)
       );
-      images.push(...pages);
     } else if (file.type.startsWith("image/")) {
-      images.push(await readFileAsDataURL(file));
+      imgs = [await readFileAsDataURL(file)];
     } else {
       showToast(`« ${file.name} » n'est ni une image ni un PDF.`, 4500);
+      continue;
     }
+    const group = "file-" + ++uploadSeq; // identifiant du fichier source
+    imgs.forEach((u) =>
+      addPage({ original: u, flat: u, display: u, processed: true, filter: "original", group })
+    );
+    added += imgs.length;
   }
-  return images;
+  return added;
 }
 
-// Accueil → "Téléverser" : images/PDF déjà scannés → directement la liste
-// (pas de rognage : un fichier importé est déjà propre).
+// Accueil / liste → "Téléverser" : images/PDF déjà scannés → directement la
+// liste (pas de rognage : un fichier importé est déjà propre).
 document.getElementById("file-input").addEventListener("change", async (e) => {
   const files = Array.from(e.target.files || []);
   e.target.value = ""; // permet de re-sélectionner les mêmes fichiers
   if (!files.length) return;
   try {
-    const images = await filesToImages(files);
+    const added = await addUploadedFiles(files);
     hideBusy();
-    if (!images.length) return;
-    images.forEach((u) => addPage(u));
+    if (!added) return;
     invalidatePendingPdf();
     showScreen("screen-pages");
   } catch (err) {
@@ -799,7 +808,8 @@ document.getElementById("btn-viewer-close").addEventListener("click", closeViewe
 // après l'autre (1 PDF + 1 ligne chacun).
 
 let pageTexts = [];        // texte OCR de chaque page (même ordre que cachetPages)
-let cachetItems = [];      // [{ url, text, n }] — une entrée par page du lot
+let cachetPageGroups = []; // fichier source de chaque page (ou null = caméra)
+let cachetItems = [];      // [{ url, text, n, group }] — une entrée par page du lot
 let cachetGroups = [];     // [[item, …], …] — un tableau de pages par contrat
 let cachetContracts = [];  // [{ pages:[dataURL], text }]
 let cachetIndex = 0;       // contrat en cours de saisie
@@ -846,10 +856,23 @@ function buildInitialGroups() {
     url,
     text: pageTexts[i] || "",
     n: i + 1, // numéro de page d'origine (affiché sur la vignette)
+    group: cachetPageGroups[i] || null, // fichier source (téléversement)
   }));
   cachetGroups = [];
   cachetItems.forEach((item, i) => {
-    if (i === 0 || isContractStart(item.text)) cachetGroups.push([item]);
+    const prev = cachetItems[i - 1];
+    let newContract;
+    if (i === 0) {
+      newContract = true;
+    } else if (item.group || prev.group) {
+      // au moins une page vient d'un fichier → on coupe quand le fichier
+      // change (1 fichier = 1 contrat ; pas de découpage OCR à l'intérieur).
+      newContract = item.group !== prev.group;
+    } else {
+      // deux photos caméra → découpage automatique par OCR.
+      newContract = isContractStart(item.text);
+    }
+    if (newContract) cachetGroups.push([item]);
     else cachetGroups[cachetGroups.length - 1].push(item);
   });
 }
@@ -864,9 +887,10 @@ function buildContracts() {
 
 // Lance le parcours cachet sur un lot d'images : OCR → découpage (ou
 // directement le formulaire s'il n'y a qu'une page).
-async function startCachetFlow(images) {
+async function startCachetFlow(images, groups) {
   if (!images || !images.length) return;
   cachetPages = images;
+  cachetPageGroups = groups || []; // fichier source de chaque page (ou null)
   sentFirstPages = new Set(); // nouveau lot → on repart de zéro
   skippedFirstPages = new Set();
   sentLog = [];
@@ -899,7 +923,7 @@ cachetBtn.addEventListener("click", async () => {
   // export PDF en cours → on ne lance pas deux gros traitements à la fois
   if (document.getElementById("screen-pages").classList.contains("pages--locked")) return;
   await processAllPages(); // garantit des images détourées + aplanies pour l'OCR
-  await startCachetFlow(getPages());
+  await startCachetFlow(getPages(), getPageGroups());
 });
 
 // Dessine l'écran de découpage : une CARTE par contrat, avec ses pages en
