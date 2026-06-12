@@ -33,13 +33,60 @@ function findAmount(text, keyword) {
 }
 
 // "25-11-25" / "24/04/2026" → "YYYY-MM-DD" (format jour-mois-année).
+// Année sur 2 chiffres : > 50 = 19xx (ex. 92 → 1992), sinon 20xx.
 function toIso(raw) {
   if (!raw) return "";
   const p = raw.split(/[-\/.]/);
   if (p.length !== 3) return "";
   let [d, mo, y] = p;
-  if (y.length === 2) y = "20" + y;
+  if (y.length === 2) y = (+y > 50 ? "19" : "20") + y;
   return `${y}-${String(+mo).padStart(2, "0")}-${String(+d).padStart(2, "0")}`;
+}
+
+// Date de NAISSANCE de l'utilisateur : ne doit JAMAIS être prise pour une
+// date de prestation.
+const BIRTHDATE_ISO = "1992-05-23";
+
+// Trouve la date de RÉALISATION (prestation). On collecte toutes les dates,
+// on écarte celles qui ne peuvent pas être une prestation (date de
+// naissance exacte, contexte « né(e) le / naissance », année < 2015 — une
+// prestation est forcément récente), puis on PRÉFÈRE une date placée juste
+// après un mot-clé de prestation ; à défaut, la 1re date plausible.
+function findRealizationDate(T) {
+  const DATE = /\d{1,2}[-\/.]\d{1,2}[-\/.]\d{2,4}/g;
+  const cands = [];
+  let m;
+  while ((m = DATE.exec(T)) !== null) {
+    const iso = toIso(m[0]);
+    if (!iso) continue;
+    const year = +iso.slice(0, 4);
+    const before = T.slice(Math.max(0, m.index - 24), m.index).toLowerCase();
+    const isBirth =
+      iso === BIRTHDATE_ISO ||
+      year < 2015 ||
+      /naiss|n[ée]e?\s+le\b/.test(before);
+    cands.push({ iso, index: m.index, ok: !isBirth });
+  }
+  const pool = cands.filter((c) => c.ok);
+  if (!pool.length) return "";
+
+  const KW = /(r[ée]alis|prestation|enregistr|s[ée]ance|tournage|dates?\s+suivantes?|effectu|p[ée]riode)/gi;
+  const kw = [];
+  let k;
+  while ((k = KW.exec(T)) !== null) kw.push(k.index);
+
+  let best = null;
+  let bestDist = Infinity;
+  for (const c of pool) {
+    for (const kp of kw) {
+      const dist = c.index - kp; // mot-clé AVANT la date, à portée
+      if (dist >= 0 && dist < 60 && dist < bestDist) {
+        bestDist = dist;
+        best = c;
+      }
+    }
+  }
+  return (best || pool[0]).iso;
 }
 
 // Enlève les MAJUSCULES inutiles : un mot écrit TOUT EN CAPITALES devient
@@ -83,12 +130,8 @@ export function extractFields(text) {
   // Convention perso : "AMB" / "amb." / "ambiance(s)" → "Ambiances".
   role = role.replace(/\bamb\w*\.?/gi, "Ambiances");
 
-  // Date de réalisation : "dates suivantes : X", sinon "Date X", sinon 1re date
-  const dateRaw =
-    (T.match(/dates?\s*(?:suivantes?)?\s*:?\s*(\d{1,2}[-\/.]\d{1,2}[-\/.]\d{2,4})/i) || [])[1] ||
-    (T.match(/\bdate\s+(\d{1,2}[-\/.]\d{1,2}[-\/.]\d{2,4})/i) || [])[1] ||
-    (T.match(/(\d{1,2}[-\/.]\d{1,2}[-\/.]\d{2,4})/) || [])[1] ||
-    "";
+  // Date de réalisation (prestation) — jamais la date de naissance.
+  const dateIso = findRealizationDate(T);
 
   // Nombre de lignes : "Lignage X" / "X lignes" / "lignes : X"
   const lignes =
@@ -106,7 +149,7 @@ export function extractFields(text) {
     // dans le formulaire si l'employeur diffère du studio d'enregistrement.
     employe: studioName,
     da: softTitle(da),
-    date: toIso(dateRaw),
+    date: dateIso,
     lignes: lignes || "",
     brut: findAmount(T, "brut"),
     net: findAmount(T, "\\bnet\\b"),
