@@ -621,6 +621,9 @@ const F = {
   brut: document.getElementById("f-brut"),
   net: document.getElementById("f-net"),
   role: document.getElementById("f-role"),
+  type: document.getElementById("f-type"),
+  cachets: document.getElementById("f-cachets"),
+  heures: document.getElementById("f-heures"),
 };
 const fFilename = document.getElementById("f-filename");
 const cachetBtn = document.getElementById("btn-cachet");
@@ -637,6 +640,9 @@ function currentFields() {
     brut: F.brut.value.trim(),
     net: F.net.value.trim(),
     role: F.role.value.trim() || "ND",
+    typeProjet: F.type.value,
+    nbCachet: F.cachets.value.trim(),
+    nbHeures: F.heures.value.trim(),
   };
 }
 
@@ -688,8 +694,21 @@ document.getElementById("btn-copy-studio").addEventListener("click", (e) => {
   employeFollows = true;
 });
 
+// --- Nb d'heure = 12 h par cachet (estimation), sauf si saisi à la main.
+//     Même principe que le net : tant qu'on n'a pas touché le champ, il
+//     suit le nombre de cachets. ---
+const HOURS_PER_CACHET = 12;
+let heuresManual = false;
+function computeHeures() {
+  if (heuresManual) return;
+  const n = parseInt(F.cachets.value, 10);
+  F.heures.value = isFinite(n) && n > 0 ? String(n * HOURS_PER_CACHET) : "";
+}
+F.cachets.addEventListener("input", computeHeures);
+F.heures.addEventListener("input", () => { heuresManual = true; });
+
 // --- Entrée / "Suivant" du clavier = passer au champ suivant ---
-const fieldOrder = [F.studio, F.employe, F.projet, F.da, F.role, F.date, F.lignes, F.brut, F.net];
+const fieldOrder = [F.studio, F.employe, F.projet, F.da, F.role, F.date, F.lignes, F.cachets, F.heures, F.brut, F.net];
 fieldOrder.forEach((el, i) => {
   el.setAttribute("enterkeyhint", i < fieldOrder.length - 1 ? "next" : "done");
   el.addEventListener("keydown", (e) => {
@@ -714,6 +733,12 @@ function fillForm(f) {
   F.net.classList.remove("input--est");
   if (!F.net.value) computeNet(); // estime le net si absent
   F.role.value = f.role || "ND";
+  // Type de projet : on garde le choix précédent (souvent constant sur un
+  // même lot). Nb de cachet / Nb d'heure : on repart des valeurs par
+  // défaut (1 cachet → 12 h) pour chaque nouveau contrat.
+  heuresManual = false;
+  F.cachets.value = "1";
+  computeHeures(); // → 12 h
   refreshFilename();
 }
 
@@ -1313,8 +1338,9 @@ document.getElementById("btn-cachet-save").addEventListener("click", async () =>
     const payload = {
       filename,
       annee: f.date ? f.date.slice(0, 4) : String(new Date().getFullYear()),
-      date: f.date, projet: f.projet, studio: f.studio, employe: f.employe,
-      da: f.da, role: f.role, lignes: f.lignes,
+      date: f.date, typeProjet: f.typeProjet, projet: f.projet,
+      studio: f.studio, employe: f.employe, da: f.da, role: f.role,
+      lignes: f.lignes, nbCachet: f.nbCachet, nbHeures: f.nbHeures,
       // virgule décimale, sans espaces → la feuille reconnaît le montant (€)
       brut: f.brut ? formatMoney(brutN) : "",
       net: f.net ? formatMoney(netN) : "",

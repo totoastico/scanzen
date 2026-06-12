@@ -670,7 +670,8 @@ button.upload-link:disabled {
   font-weight: 600;
   color: var(--muted);
 }
-.field input {
+.field input,
+.field select {
   font-size: 16px; /* >=16px : évite le zoom auto sur iOS */
   font-weight: 400;
   color: var(--ink);
@@ -679,9 +680,21 @@ button.upload-link:disabled {
   border-radius: 10px;
   background: #fff;
 }
-.field input:focus {
+.field input:focus,
+.field select:focus {
   outline: none;
   border-color: var(--accent);
+}
+/* Le <select> natif ignore le border-radius : on neutralise son rendu
+   système (appearance:none) et on redessine une petite flèche, pour qu'il
+   soit identique aux autres champs (coins arrondis compris). */
+.field select {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 34px;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'><path d='M1 1l5 5 5-5' fill='none' stroke='%23999' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
 }
 .form__filename {
   font-size: 13px;
@@ -859,13 +872,18 @@ button.upload-link:disabled {
   gap: 10px;
   padding-top: 0; /* la bande de vignettes "sticky" colle au bord haut */
 }
-#screen-contract .field input {
+#screen-contract .field input,
+#screen-contract .field select {
   padding: 10px 12px;
 }
 /* le champ € a besoin de place à droite pour le symbole (règle APRÈS
    celle du dessus pour gagner en priorité) */
 #screen-contract .field__money input {
   padding-right: 32px;
+}
+/* idem pour le menu déroulant : de la place pour la petite flèche */
+#screen-contract .field select {
+  padding-right: 34px;
 }
 
 /* ===================================================================
@@ -984,7 +1002,8 @@ button.upload-link:disabled {
   grid-template-columns: 1fr 1fr;
   gap: 10px;
 }
-.field input {
+.field input,
+.field select {
   width: 100%;
   min-width: 0; /* sinon le type=date refuse de rétrécir dans une grille */
 }

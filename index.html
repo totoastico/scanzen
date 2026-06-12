@@ -215,6 +215,16 @@
       <label class="field">Rôle
         <input id="f-role" type="text" placeholder="ND" autocapitalize="words" autocomplete="off" />
       </label>
+      <label class="field">Type de projet
+        <select id="f-type">
+          <option value="doublage">Doublage</option>
+          <option value="pub">Pub</option>
+          <option value="audiobook">Audiobook</option>
+          <option value="VR">VR</option>
+          <option value="corporatif">Corporatif</option>
+          <option value="institutional">Institutional</option>
+        </select>
+      </label>
 
       <div class="field-row">
         <label class="field">Date de réalisation
@@ -222,6 +232,15 @@
         </label>
         <label class="field">Lignes
           <input id="f-lignes" type="number" inputmode="numeric" />
+        </label>
+      </div>
+
+      <div class="field-row">
+        <label class="field">Nb de cachet
+          <input id="f-cachets" type="number" inputmode="numeric" min="1" value="1" />
+        </label>
+        <label class="field">Nb d'heure
+          <input id="f-heures" type="number" inputmode="numeric" min="0" value="12" />
         </label>
       </div>
 
