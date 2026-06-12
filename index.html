@@ -30,18 +30,18 @@
        ========================================================= -->
   <section class="screen screen--active" id="screen-home">
     <div class="home">
-      <!-- LE bouton : un seul parcours pour tout (scan, puis PDF ou cachet). -->
-      <button class="scan-button" id="btn-scan" type="button">
-        SkanZen
+      <!-- LE bouton : le panda rond. Un seul parcours pour tout
+           (scan, puis PDF ou cachet). -->
+      <button class="scan-button scan-button--panda" id="btn-scan" type="button">
+        <img src="icons/panda.svg" alt="Skanzen" />
       </button>
+      <span class="scan-name">Skanzen</span>
 
       <!-- Option discrète : importer des images ou des PDF existants -->
       <label class="upload-link">
         <span class="upload-link__icon">⤓</span> Téléverser (image ou PDF)
         <input type="file" id="file-input" accept="image/*,application/pdf" multiple hidden />
       </label>
-
-      <span class="brand">Skanzen</span>
     </div>
   </section>
 
