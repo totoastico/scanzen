@@ -105,8 +105,11 @@ export function extractFields(text) {
   const T = (text || "").replace(/ /g, " ").replace(/\s+/g, " ");
 
   // Studio (employeur) : "la société X" jusqu'à SAS/SARL/(Siret/au capital/dont
-  const studio =
+  let studio =
     (T.match(/soci[ée]t[ée]\s+([A-Z0-9ÉÈÀ][A-Za-z0-9ÉÈÀ-ÿ&'.\- ]{1,40}?)\s*(?:SAS|SARL|\bSA\b|\(|,|au capital|dont)/i) || [])[1] || "";
+  // Faux positif : une formule juridique ("signataire mandatée à cet effet"…)
+  // n'est pas un nom de studio.
+  if (/signataire|mandat/i.test(studio)) studio = "";
 
   // Titre original / projet (s'arrête avant "et pour titre", "(", ou un n° d'épisode)
   let projet = (T.match(/titre original\s*:?\s*(.+?)(?:\s+et pour titre|\s*\(|\s+\d{2,}|$)/i) || [])[1] || "";
@@ -121,12 +124,18 @@ export function extractFields(text) {
   // Titra, Transperfect) ou "rôle(s) de X pour…" (Video Adapt).
   // On saute le "(ou créer la voix) de" et on s'arrête au PREMIER
   // "dans"/"pour" pour ne pas avaler les cases à cocher qui suivent.
+  // Le "(ou créer la voix) de" est tolérant aux fautes d'OCR : "la voix"
+  // devient souvent "ln voix"/"1a voix"… → on accepte n'importe quel petit
+  // mot entre "créer" et "voix".
   let role =
     (T.match(
-      /r[ôo]le\(?s?\)?\s*(?:de|:)\s*(?:\(?ou cr[ée]+r la voix\)?\s*(?:de)?\s*:?\s*)?(.+?)\s+(?:dans|pour)\b/i
+      /r[ôo]le\(?s?\)?\s*(?:de|:)\s*(?:\(?\s*ou\s+cr[ée]+r\s+\S+\s+voix\s*\)?\s*(?:de)?\s*:?\s*)?(.+?)\s+(?:dans|pour)\b/i
     ) || [])[1] || "";
   // Trop long = du bruit d'OCR (formulaire, cases à cocher…), pas un rôle.
   if (role.length > 60) role = "";
+  // Rogne le bruit d'OCR en fin de capture : chiffres et ponctuation isolés
+  // (ex. "Jacek 5" → "Jacek"). On ne touche pas aux lettres.
+  role = role.replace(/[\s\d.,;:?!]+$/, "").trim();
   // Convention perso : "AMB" / "amb." / "ambiance(s)" → "Ambiances".
   role = role.replace(/\bamb\w*\.?/gi, "Ambiances");
 
